@@ -8,7 +8,7 @@ import {
   ArrowRightLeft, Loader2, Search, ExternalLink,
   Target, TrendingUp, Info, Link as LinkIcon,
   CheckCircle2, PieChart, Activity, Zap,
-  Globe, Landmark, ArrowUpRight, BarChart3
+  Globe, Landmark, ArrowUpRight, BarChart3, MapPin
 } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, Cell } from 'recharts';
 
@@ -19,6 +19,9 @@ interface AIAdvisorProps {
 }
 
 const AIAdvisor: React.FC<AIAdvisorProps> = ({ assets, onApplyRebalancing, exchangeRate }) => {
+  // 필터 상태
+  const [region, setRegion] = useState<'ALL' | 'KRW' | 'USD'>('ALL');
+
   // 포트폴리오 분석 상태
   const [data, setData] = useState<AnalysisResponse | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
@@ -33,14 +36,20 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({ assets, onApplyRebalancing, excha
   const [searchedStockInfo, setSearchedStockInfo] = useState<StockInfo | null>(null);
   const [showDeepDiveSources, setShowDeepDiveSources] = useState(false);
 
-  // 리밸런싱 차트 데이터 가공 (AI가 제안한 목표 비중과 결합)
+  // 현재 필터에 따른 자산 필터링
+  const filteredAssets = useMemo(() => {
+    if (region === 'ALL') return assets;
+    return assets.filter(a => a.currency === region);
+  }, [assets, region]);
+
+  // 리밸런싱 차트 데이터 가공 (필터링된 자산 기준)
   const rebalancingChartData = useMemo(() => {
-    if (assets.length === 0) return [];
+    if (filteredAssets.length === 0) return [];
     
     const instGroups: Record<string, number> = {};
     let totalValue = 0;
     
-    assets.forEach(a => {
+    filteredAssets.forEach(a => {
       const val = a.currentPrice * a.quantity * (a.currency === 'USD' ? exchangeRate : 1);
       instGroups[a.institution] = (instGroups[a.institution] || 0) + val;
       totalValue += val;
@@ -50,9 +59,7 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({ assets, onApplyRebalancing, excha
     
     return institutions.map(name => {
       const currentWeight = (instGroups[name] / totalValue) * 100;
-      // AI가 제안한 데이터가 있다면 사용, 없으면 시뮬레이션
       const aiTarget = data?.rebalancingWeights?.find(w => w.institution.includes(name) || name.includes(w.institution));
-      
       let targetWeight = aiTarget ? aiTarget.targetWeight : (currentWeight + (Math.random() * 10 - 5));
       
       return {
@@ -61,14 +68,19 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({ assets, onApplyRebalancing, excha
         '목표 비중': parseFloat(Math.max(5, targetWeight).toFixed(1))
       };
     });
-  }, [assets, exchangeRate, data]);
+  }, [filteredAssets, exchangeRate, data]);
 
   const fetchAnalysis = async () => {
+    if (filteredAssets.length === 0) {
+      alert(`${region === 'KRW' ? '국내' : '해외'} 자산이 등록되어 있지 않습니다.`);
+      return;
+    }
     setLoading(true);
     setCompleted(new Set()); 
     setShowPortfolioSources(false); 
     try {
-      const result = await getAIAnalysis(assets);
+      // 필터링된 자산 데이터만 AI에게 전달
+      const result = await getAIAnalysis(filteredAssets);
       setData(result);
     } catch (err) {
       console.error(err);
@@ -76,8 +88,6 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({ assets, onApplyRebalancing, excha
       setLoading(false);
     }
   };
-
-  // 자동 분석 실행(useEffect) 제거: 버튼 클릭시에만 작동하도록 수정
 
   const handleDeepDiveSearch = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -118,10 +128,32 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({ assets, onApplyRebalancing, excha
     }, 2500);
   };
 
-  const institutionList: string[] = Array.from(new Set(assets.map(a => a.institution)));
+  const institutionList: string[] = Array.from(new Set(filteredAssets.map(a => a.institution)));
 
   return (
     <div className="p-5 space-y-6 pb-28">
+      {/* Region Filter Tabs */}
+      <div className="flex p-1 bg-white rounded-2xl shadow-sm border border-slate-100">
+        <button 
+          onClick={() => { setRegion('ALL'); setData(null); }}
+          className={`flex-1 py-2.5 rounded-xl text-xs font-black transition-all flex items-center justify-center gap-2 ${region === 'ALL' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400'}`}
+        >
+          <Globe size={14} /> 전체
+        </button>
+        <button 
+          onClick={() => { setRegion('KRW'); setData(null); }}
+          className={`flex-1 py-2.5 rounded-xl text-xs font-black transition-all flex items-center justify-center gap-2 ${region === 'KRW' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400'}`}
+        >
+          <MapPin size={14} /> 국내
+        </button>
+        <button 
+          onClick={() => { setRegion('USD'); setData(null); }}
+          className={`flex-1 py-2.5 rounded-xl text-xs font-black transition-all flex items-center justify-center gap-2 ${region === 'USD' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400'}`}
+        >
+          <Globe size={14} /> 해외
+        </button>
+      </div>
+
       {/* Header Banner */}
       <section className="bg-gradient-to-br from-[#1E293B] to-[#0F172A] rounded-[2.5rem] p-7 text-white shadow-xl relative overflow-hidden">
         <div className="absolute -right-4 -top-4 w-32 h-32 bg-indigo-500/20 rounded-full blur-3xl"></div>
@@ -130,17 +162,17 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({ assets, onApplyRebalancing, excha
             <div className="p-2 bg-indigo-50 rounded-xl text-indigo-600"><Sparkles size={18} /></div>
             <span className="text-[10px] font-black uppercase tracking-widest text-indigo-300">Smart AI Insights</span>
           </div>
-          <h2 className="text-2xl font-black mb-2 tracking-tight">AI 포트폴리오 진단</h2>
+          <h2 className="text-2xl font-black mb-2 tracking-tight">AI {region === 'ALL' ? '통합' : region === 'KRW' ? '국내' : '해외'} 포트폴리오 진단</h2>
           <p className="text-slate-400 text-xs font-medium leading-relaxed">
-            구글 검색 기반 최신 뉴스 및 지표를 분석하여<br />맞춤형 리밸런싱 전략을 도출했습니다.
+            {region === 'ALL' ? '전체' : region === 'KRW' ? '국내(KRW)' : '해외(USD)'} 자산의 실시간 웹 데이터를 분석하여<br />최적화된 리밸런싱 전략을 제안합니다.
           </p>
           <button 
             onClick={fetchAnalysis} 
-            disabled={loading}
-            className="mt-6 flex items-center gap-2 text-xs font-black bg-white/10 hover:bg-white/20 px-5 py-3 rounded-full transition-all disabled:opacity-50 active:scale-95 border border-white/5"
+            disabled={loading || filteredAssets.length === 0}
+            className="mt-6 flex items-center gap-2 text-xs font-black bg-white/10 hover:bg-white/20 px-5 py-3 rounded-full transition-all disabled:opacity-30 active:scale-95 border border-white/5"
           >
             {loading ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
-            포트폴리오 분석 갱신
+            {region === 'ALL' ? '전체' : region === 'KRW' ? '국내' : '해외'} 분석 시작
           </button>
         </div>
       </section>
@@ -148,12 +180,15 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({ assets, onApplyRebalancing, excha
       {/* Rebalancing Visual Comparison Chart */}
       {rebalancingChartData.length > 0 && (
         <section className="bg-white rounded-[2.5rem] p-7 shadow-sm border border-slate-50">
-          <div className="flex items-center gap-2 mb-6">
-            <div className="p-2 bg-indigo-50 text-indigo-600 rounded-xl"><BarChart3 size={18} /></div>
-            <div>
-              <h4 className="font-black text-slate-800 text-sm">기관별 비중 진단</h4>
-              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Current vs Target Allocation</p>
+          <div className="flex items-center justify-between mb-6">
+            <div className="flex items-center gap-2">
+              <div className="p-2 bg-indigo-50 text-indigo-600 rounded-xl"><BarChart3 size={18} /></div>
+              <div>
+                <h4 className="font-black text-slate-800 text-sm">진단 대상: {region === 'ALL' ? '전체' : region === 'KRW' ? '국내' : '해외'} 기관</h4>
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Selected Assets Distribution</p>
+              </div>
             </div>
+            {data && <div className="text-[10px] font-black text-emerald-500 bg-emerald-50 px-2 py-1 rounded-lg">AI ANALYZED</div>}
           </div>
           
           <div className="h-64 w-full">
@@ -182,7 +217,9 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({ assets, onApplyRebalancing, excha
               <div className="w-14 h-14 border-4 border-indigo-100 border-t-indigo-600 rounded-full animate-spin"></div>
               <Sparkles className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-indigo-600" size={18} />
             </div>
-            <p className="text-xs font-bold text-indigo-600 bg-white px-4 py-2 rounded-full shadow-lg border border-indigo-50">실시간 데이터를 분석 중입니다...</p>
+            <p className="text-xs font-bold text-indigo-600 bg-white px-4 py-2 rounded-full shadow-lg border border-indigo-50">
+              {region === 'ALL' ? '전체' : region === 'KRW' ? '국내' : '해외'} 시장 상황을 확인 중입니다...
+            </p>
           </div>
         )}
 
@@ -245,18 +282,22 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({ assets, onApplyRebalancing, excha
         ) : !loading && (
           <div className="text-center py-20 flex flex-col items-center gap-4">
             <PieChart size={48} className="text-slate-200" />
-            <p className="italic text-slate-300 text-sm font-bold">분석 데이터가 없습니다. 분석 갱신 버튼을 눌러주세요.</p>
+            <p className="italic text-slate-300 text-sm font-bold">
+              {filteredAssets.length === 0 
+                ? `${region === 'KRW' ? '국내' : '해외'} 자산이 없습니다.` 
+                : '분석 데이터가 없습니다. 분석 시작 버튼을 눌러주세요.'}
+            </p>
           </div>
         )}
       </section>
 
-      {/* Execution Actions */}
-      {data && (
+      {/* Execution Actions (Filtered) */}
+      {data && institutionList.length > 0 && (
         <section className={`space-y-4 transition-all duration-300 ${loading ? 'opacity-50 grayscale-[0.5]' : 'opacity-100'}`}>
           <div className="flex items-center justify-between px-1">
             <h4 className="font-black text-slate-800 flex items-center gap-2 text-base">
               <ArrowRightLeft size={20} className="text-indigo-600" />
-              스마트 리밸런싱 실행
+              스마트 리밸런싱 실행 ({region === 'ALL' ? '전체' : region === 'KRW' ? '국내' : '해외'})
             </h4>
           </div>
           <div className="space-y-4">

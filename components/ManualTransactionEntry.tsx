@@ -1,6 +1,6 @@
 
 import React, { useState, useMemo, useRef, useEffect } from 'react';
-import { X, Calendar, Search, ChevronRight, ChevronLeft, Loader2, Sparkles, CreditCard, CheckCircle2, Clock, Save, Layers } from 'lucide-react';
+import { X, Calendar, Search, ChevronRight, ChevronLeft, ChevronsLeft, ChevronsRight, Loader2, Sparkles, CreditCard, CheckCircle2, Clock, Save, Layers } from 'lucide-react';
 import { Transaction, TransactionType, Asset, Account, AssetType } from '../types';
 import { searchStockList, StockInfo } from '../services/geminiService';
 
@@ -92,13 +92,21 @@ const ManualTransactionEntry: React.FC<ManualTransactionEntryProps> = ({ onClose
     }));
   };
 
-  const handleSetToday = () => {
-    setFormData(prev => ({ ...prev, date: new Date().toLocaleDateString('en-CA') }));
-  };
-  
-  const handleSetYesterday = () => {
+  const handleSetPastDate = (days: number) => {
     const d = new Date();
-    d.setDate(d.getDate() - 1);
+    d.setDate(d.getDate() - days);
+    setFormData(prev => ({ ...prev, date: d.toLocaleDateString('en-CA') }));
+  };
+
+  const handleSetPastMonth = (months: number) => {
+    const d = new Date();
+    d.setMonth(d.getMonth() - months);
+    setFormData(prev => ({ ...prev, date: d.toLocaleDateString('en-CA') }));
+  };
+
+  const handleSetPastYear = (years: number) => {
+    const d = new Date();
+    d.setFullYear(d.getFullYear() - years);
     setFormData(prev => ({ ...prev, date: d.toLocaleDateString('en-CA') }));
   };
 
@@ -161,6 +169,10 @@ const ManualTransactionEntry: React.FC<ManualTransactionEntryProps> = ({ onClose
   const changeMonth = (delta: number) => {
     setViewDate(prev => new Date(prev.getFullYear(), prev.getMonth() + delta, 1));
   };
+
+  const changeYear = (delta: number) => {
+    setViewDate(prev => new Date(prev.getFullYear() + delta, prev.getMonth(), 1));
+  };
   
   const selectDate = (day: number) => {
     const y = viewDate.getFullYear();
@@ -215,33 +227,27 @@ const ManualTransactionEntry: React.FC<ManualTransactionEntryProps> = ({ onClose
             </div>
           </div>
 
-          <div className="space-y-2">
+          <div className="space-y-3">
             <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">거래 일자</label>
-            <div className="flex gap-2">
-              <div className="relative flex-1">
-                <Calendar className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300" size={16} />
-                <button 
-                  type="button"
-                  onClick={() => setIsCalendarOpen(true)}
-                  className="w-full pl-11 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-bold text-left outline-none focus:border-indigo-500 focus:bg-white transition-all text-slate-800"
-                >
-                  {formData.date || '날짜 선택'}
-                </button>
-              </div>
+            
+            <div className="relative">
+              <Calendar className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300" size={16} />
               <button 
-                type="button" 
-                onClick={handleSetYesterday}
-                className="px-4 bg-white text-slate-500 rounded-2xl font-black text-xs border border-slate-200 active:scale-95 transition-all"
+                type="button"
+                onClick={() => setIsCalendarOpen(true)}
+                className="w-full pl-11 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-bold text-left outline-none focus:border-indigo-500 focus:bg-white transition-all text-slate-800"
               >
-                어제
+                {formData.date || '날짜 선택'}
               </button>
-              <button 
-                type="button" 
-                onClick={handleSetToday}
-                className="px-4 bg-indigo-50 text-indigo-600 rounded-2xl font-black text-xs border border-indigo-100 active:scale-95 transition-all"
-              >
-                오늘
-              </button>
+            </div>
+
+            <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1">
+              <button type="button" onClick={() => handleSetPastDate(0)} className="flex-shrink-0 px-4 py-2 bg-indigo-50 text-indigo-600 rounded-xl font-black text-[10px] border border-indigo-100 active:scale-95 transition-all">오늘</button>
+              <button type="button" onClick={() => handleSetPastDate(1)} className="flex-shrink-0 px-4 py-2 bg-white text-slate-500 rounded-xl font-black text-[10px] border border-slate-200 active:scale-95 transition-all">어제</button>
+              <button type="button" onClick={() => handleSetPastDate(7)} className="flex-shrink-0 px-4 py-2 bg-white text-slate-500 rounded-xl font-black text-[10px] border border-slate-200 active:scale-95 transition-all">1주 전</button>
+              <button type="button" onClick={() => handleSetPastMonth(1)} className="flex-shrink-0 px-4 py-2 bg-white text-slate-500 rounded-xl font-black text-[10px] border border-slate-200 active:scale-95 transition-all">1개월 전</button>
+              <button type="button" onClick={() => handleSetPastMonth(3)} className="flex-shrink-0 px-4 py-2 bg-white text-slate-500 rounded-xl font-black text-[10px] border border-slate-200 active:scale-95 transition-all">3개월 전</button>
+              <button type="button" onClick={() => handleSetPastYear(1)} className="flex-shrink-0 px-4 py-2 bg-white text-slate-500 rounded-xl font-black text-[10px] border border-slate-200 active:scale-95 transition-all">1년 전</button>
             </div>
           </div>
 
@@ -249,12 +255,20 @@ const ManualTransactionEntry: React.FC<ManualTransactionEntryProps> = ({ onClose
           {isCalendarOpen && (
             <div className="fixed inset-0 z-[150] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm" onClick={() => setIsCalendarOpen(false)}>
               <div className="bg-white rounded-[2rem] p-6 w-full max-w-xs shadow-2xl animate-in zoom-in-95" onClick={e => e.stopPropagation()}>
-                <div className="flex items-center justify-between mb-6">
-                  <button onClick={() => changeMonth(-1)} className="p-2 hover:bg-slate-100 rounded-full"><ChevronLeft size={20}/></button>
-                  <h4 className="font-black text-lg text-slate-800">
-                    {viewDate.getFullYear()}년 {viewDate.getMonth() + 1}월
-                  </h4>
-                  <button onClick={() => changeMonth(1)} className="p-2 hover:bg-slate-100 rounded-full"><ChevronRight size={20}/></button>
+                <div className="flex flex-col gap-4 mb-6">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1">
+                      <button onClick={() => changeYear(-1)} className="p-2 hover:bg-slate-100 rounded-xl text-slate-400" title="1년 전"><ChevronsLeft size={18}/></button>
+                      <button onClick={() => changeMonth(-1)} className="p-2 hover:bg-slate-100 rounded-xl text-slate-400" title="1달 전"><ChevronLeft size={18}/></button>
+                    </div>
+                    <h4 className="font-black text-lg text-slate-800 tabular-nums">
+                      {viewDate.getFullYear()}년 {viewDate.getMonth() + 1}월
+                    </h4>
+                    <div className="flex items-center gap-1">
+                      <button onClick={() => changeMonth(1)} className="p-2 hover:bg-slate-100 rounded-xl text-slate-400" title="1달 후"><ChevronRight size={18}/></button>
+                      <button onClick={() => changeYear(1)} className="p-2 hover:bg-slate-100 rounded-xl text-slate-400" title="1년 후"><ChevronsRight size={18}/></button>
+                    </div>
+                  </div>
                 </div>
                 
                 <div className="grid grid-cols-7 gap-1 text-center mb-2">
