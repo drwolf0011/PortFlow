@@ -1,0 +1,24 @@
+
+{
+  "name": "PortFlow: AI 자산관리",
+  "short_name": "PortFlow",
+  "description": "분산된 내 자산을 하나로, AI 포트폴리오 매니저",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#F4F7FB",
+  "theme_color": "#4F46E5",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "https://cdn-icons-png.flaticon.com/512/2632/2632283.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "https://cdn-icons-png.flaticon.com/512/2632/2632283.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
