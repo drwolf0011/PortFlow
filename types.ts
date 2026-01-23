@@ -44,6 +44,7 @@ export interface Asset {
   institution: string;
   quantity: number;
   purchasePrice: number;
+  purchasePriceKRW?: number; // Added: 원화 환산 평균 매수 단가 (환율 반영)
   currentPrice: number;
   currency: 'KRW' | 'USD';
 }
@@ -64,6 +65,44 @@ export interface AIAnalysis {
   sources: { title: string; uri: string }[];
 }
 
+// --- AI Strategy Types (Moved from geminiService) ---
+
+export interface ExecutionPlanItem {
+  assetName: string;
+  ticker: string;
+  action: 'BUY' | 'SELL' | 'HOLD';
+  quantity: number;
+  estimatedPrice: number;
+  totalAmount: number;
+  reason: string;
+  isNew?: boolean;
+}
+
+export interface ExecutionGroup {
+  institution: string;
+  accountName: string;
+  isPension: boolean;
+  items: ExecutionPlanItem[];
+}
+
+export interface RebalancingStrategy {
+  name: string;
+  description: string;
+  riskLevel: 'LOW' | 'MEDIUM' | 'HIGH';
+  predictedReturnRate: number;
+  rationale: string;
+  targetSectorAllocation: string;
+  executionGroups: ExecutionGroup[]; 
+}
+
+export interface SavedStrategy {
+  id: string;
+  createdAt: number;
+  strategy: RebalancingStrategy;
+}
+
+// --- Sync & App Data ---
+
 export interface SyncConfig {
   apiKey: string;
   binId: string;
@@ -81,4 +120,5 @@ export interface AppData {
   lastUpdated: string;
   exchangeRate: number;
   timestamp: number;
+  savedStrategies?: SavedStrategy[];
 }

@@ -15,22 +15,16 @@ interface AssetListProps {
   onRefreshPrices: () => void;
   isRefreshing: boolean;
   exchangeRate: number;
+  refreshTick: number;
 }
 
-const AssetList: React.FC<AssetListProps> = ({ assets, onAddAsset, onDeleteAsset, onEditAsset, onSync, onRefreshPrices, isRefreshing, exchangeRate }) => {
+const AssetList: React.FC<AssetListProps> = ({ assets, onAddAsset, onDeleteAsset, onEditAsset, onSync, onRefreshPrices, isRefreshing, exchangeRate, refreshTick }) => {
   const [filter, setFilter] = useState<string>('ALL');
-  const [isSyncing, setIsSyncing] = useState(false);
   
   const filtered = useMemo(() => {
     if (filter === 'ALL') return assets;
     return assets.filter(a => a.type === filter);
   }, [assets, filter]);
-
-  const handleSyncClick = () => {
-    setIsSyncing(true);
-    onSync();
-    setTimeout(() => setIsSyncing(false), 1500);
-  };
 
   return (
     <div className="p-5 space-y-6 pb-32">
@@ -44,13 +38,6 @@ const AssetList: React.FC<AssetListProps> = ({ assets, onAddAsset, onDeleteAsset
               className={`flex items-center gap-1.5 px-4 py-2 bg-indigo-50 text-indigo-600 rounded-full text-xs font-black border border-indigo-100 active:scale-95 transition-all ${isRefreshing ? 'opacity-50' : ''}`}
             >
               <RefreshCw size={14} className={isRefreshing ? 'animate-spin' : ''} /> 시세 갱신
-            </button>
-            <button 
-              onClick={handleSyncClick}
-              disabled={isSyncing}
-              className={`flex items-center gap-1.5 px-4 py-2 bg-indigo-50 text-indigo-600 rounded-full text-xs font-black border border-indigo-100 active:scale-95 transition-all ${isSyncing ? 'opacity-50' : ''}`}
-            >
-              <History size={14} className={isSyncing ? 'animate-spin' : ''} /> 동기화
             </button>
             <button 
               onClick={onAddAsset}
@@ -85,17 +72,18 @@ const AssetList: React.FC<AssetListProps> = ({ assets, onAddAsset, onDeleteAsset
 
       <div className="space-y-4">
         {filtered.map(asset => {
-          const mult = asset.currency === 'USD' ? exchangeRate : 1;
-          const total = asset.currentPrice * asset.quantity * mult;
-          const profit = (asset.currentPrice - asset.purchasePrice) * asset.quantity * mult;
+          const mult = asset.currency === 'USD' ? (exchangeRate || 1350) : 1;
+          const totalValKRW = (asset.currentPrice || 0) * (asset.quantity || 0) * mult;
           
-          const rate = asset.purchasePrice > 0 
-            ? ((asset.currentPrice - asset.purchasePrice) / asset.purchasePrice) * 100 
-            : 0;
+          // purchasePriceKRW가 없을 경우를 대비한 방어적 계산
+          const defaultPriceKRW = asset.purchasePrice * (asset.currency === 'USD' ? (exchangeRate || 1350) : 1);
+          const costBasisKRW = (asset.quantity || 0) * (asset.purchasePriceKRW || defaultPriceKRW);
+          
+          const profit = totalValKRW - costBasisKRW;
+          const rate = costBasisKRW > 0 ? (profit / costBasisKRW) * 100 : 0;
           
           const isPlus = profit > 0;
-          const isZero = profit === 0;
-          const isStale = isZero && asset.type !== '현금';
+          const isZero = Math.abs(profit) < 1;
 
           return (
             <div key={asset.id} className="bg-white rounded-[1.5rem] p-5 shadow-sm border border-slate-50 relative group transition-all hover:shadow-md">
@@ -120,44 +108,26 @@ const AssetList: React.FC<AssetListProps> = ({ assets, onAddAsset, onDeleteAsset
               </div>
               
               <div className="h-12 w-full mb-4">
-                 <AssetSparkline ticker={asset.ticker} name={asset.name} isPlus={isPlus} />
+                 <AssetSparkline ticker={asset.ticker} name={asset.name} isPlus={isPlus} refreshTick={refreshTick} />
               </div>
               
               <div className="flex justify-between items-end">
                 <div>
-                  <p className="text-[10px] font-bold text-slate-400 mb-0.5">평가금액 ({asset.quantity.toLocaleString()}주)</p>
-                  <p className="text-lg font-black text-slate-900">{Math.floor(total).toLocaleString()}원</p>
+                  <p className="text-[10px] font-bold text-slate-400 mb-0.5">평가금액 ({(asset.quantity || 0).toLocaleString()}주)</p>
+                  <p className="text-lg font-black text-slate-900">{Math.floor(totalValKRW).toLocaleString()}원</p>
                 </div>
                 <div className="text-right">
-                  {isStale ? (
-                    <div className="flex flex-col items-end">
-                      <span className="text-[9px] font-black text-amber-500 bg-amber-50 px-2 py-0.5 rounded flex items-center gap-1">
-                        <AlertCircle size={10} /> 시세 업데이트 필요
-                      </span>
-                      <p className="text-[10px] font-bold text-slate-300">0%</p>
-                    </div>
-                  ) : (
-                    <>
-                      <p className={`text-sm font-black ${isZero ? 'text-slate-400' : isPlus ? 'text-rose-500' : 'text-blue-500'}`}>
-                        {isPlus ? '+' : ''}{rate.toFixed(2)}%
-                      </p>
-                      <p className={`text-[10px] font-bold ${isZero ? 'text-slate-300' : isPlus ? 'text-rose-500/60' : 'text-blue-500/60'}`}>
-                        {Math.floor(profit).toLocaleString()}원
-                      </p>
-                    </>
-                  )}
+                  <p className={`text-sm font-black ${isZero ? 'text-slate-400' : isPlus ? 'text-rose-500' : 'text-blue-500'}`}>
+                    {isPlus ? '+' : ''}{rate.toFixed(2)}%
+                  </p>
+                  <p className={`text-[10px] font-bold ${isZero ? 'text-slate-300' : isPlus ? 'text-rose-500/60' : 'text-blue-500/60'}`}>
+                    {Math.floor(profit).toLocaleString()}원
+                  </p>
                 </div>
               </div>
             </div>
           );
         })}
-        
-        {filtered.length === 0 && (
-          <div className="py-20 flex flex-col items-center justify-center gap-4 text-slate-300">
-            <PiggyBank size={48} className="opacity-20" />
-            <p className="font-bold italic">표시할 자산이 없습니다.</p>
-          </div>
-        )}
       </div>
     </div>
   );

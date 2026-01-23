@@ -1,6 +1,6 @@
 
 import React, { useState, useMemo, useRef, useEffect } from 'react';
-import { X, Calendar, Search, ChevronRight, ChevronLeft, ChevronsLeft, ChevronsRight, Loader2, Sparkles, CreditCard, CheckCircle2, Clock, Save, Layers } from 'lucide-react';
+import { X, Calendar, Search, ChevronRight, ChevronLeft, ChevronsLeft, ChevronsRight, Loader2, Sparkles, CreditCard, CheckCircle2, Clock, Save, Layers, RefreshCw } from 'lucide-react';
 import { Transaction, TransactionType, Asset, Account, AssetType } from '../types';
 import { searchStockList, StockInfo } from '../services/geminiService';
 
@@ -246,8 +246,6 @@ const ManualTransactionEntry: React.FC<ManualTransactionEntryProps> = ({ onClose
               <button type="button" onClick={() => handleSetPastDate(1)} className="flex-shrink-0 px-4 py-2 bg-white text-slate-500 rounded-xl font-black text-[10px] border border-slate-200 active:scale-95 transition-all">어제</button>
               <button type="button" onClick={() => handleSetPastDate(7)} className="flex-shrink-0 px-4 py-2 bg-white text-slate-500 rounded-xl font-black text-[10px] border border-slate-200 active:scale-95 transition-all">1주 전</button>
               <button type="button" onClick={() => handleSetPastMonth(1)} className="flex-shrink-0 px-4 py-2 bg-white text-slate-500 rounded-xl font-black text-[10px] border border-slate-200 active:scale-95 transition-all">1개월 전</button>
-              <button type="button" onClick={() => handleSetPastMonth(3)} className="flex-shrink-0 px-4 py-2 bg-white text-slate-500 rounded-xl font-black text-[10px] border border-slate-200 active:scale-95 transition-all">3개월 전</button>
-              <button type="button" onClick={() => handleSetPastYear(1)} className="flex-shrink-0 px-4 py-2 bg-white text-slate-500 rounded-xl font-black text-[10px] border border-slate-200 active:scale-95 transition-all">1년 전</button>
             </div>
           </div>
 
@@ -399,6 +397,23 @@ const ManualTransactionEntry: React.FC<ManualTransactionEntryProps> = ({ onClose
               <input type="number" name="price" placeholder="0" value={formData.price || ''} onChange={handleChange} className="w-full px-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-bold outline-none focus:border-indigo-500 focus:bg-white transition-all" />
             </div>
           </div>
+
+          {formData.currency === 'USD' && (
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">적용 환율</label>
+              <div className="relative">
+                <RefreshCw className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300" size={16} />
+                <input 
+                  type="number" 
+                  name="exchangeRate" 
+                  value={formData.exchangeRate || ''} 
+                  onChange={handleChange} 
+                  className="w-full pl-11 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-bold outline-none focus:border-indigo-500 focus:bg-white transition-all"
+                  placeholder={exchangeRate.toString()}
+                />
+              </div>
+            </div>
+          )}
 
           <div className={`rounded-[1.5rem] p-5 border flex items-center justify-between font-bold text-sm shrink-0 ${formData.type === TransactionType.BUY ? 'bg-rose-50 border-rose-100' : 'bg-blue-50 border-blue-100'}`}>
             <span className="text-slate-500 font-black">원화 환산 총액</span>

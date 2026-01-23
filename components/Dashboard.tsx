@@ -1,3 +1,4 @@
+
 import React, { useMemo, useState } from 'react';
 import { Asset, Account, AssetType } from '../types';
 import { 
@@ -42,9 +43,13 @@ const Dashboard: React.FC<DashboardProps> = ({ assets, accounts, user, onRefresh
 
     const processedAssets = assets.filter(a => !a.accountId || !hiddenAccountIds.has(a.accountId))
       .map(a => {
-        const mult = a.currency === 'USD' ? exchangeRate : 1;
+        const mult = a.currency === 'USD' ? (exchangeRate || 1350) : 1;
         const currentVal = (Number(a.currentPrice) || 0) * (Number(a.quantity) || 0) * mult;
-        const costVal = (Number(a.purchasePrice) || 0) * (Number(a.quantity) || 0) * mult;
+        
+        // Accurate Cost Basis using purchasePriceKRW if available
+        const defaultPriceKRW = a.purchasePrice * (a.currency === 'USD' ? (exchangeRate || 1350) : 1);
+        const costVal = (a.quantity || 0) * (a.purchasePriceKRW || defaultPriceKRW);
+        
         return { ...a, currentVal, costVal, profit: currentVal - costVal };
       })
       .sort((a, b) => b.currentVal - a.currentVal);
@@ -136,13 +141,19 @@ const Dashboard: React.FC<DashboardProps> = ({ assets, accounts, user, onRefresh
               <Clock size={12} /> {lastUpdated || '시세 확인 중...'}
             </div>
           </div>
-          <button 
-            onClick={onRefresh}
-            disabled={isUpdating}
-            className={`p-3 bg-white rounded-full shadow-sm text-slate-400 hover:text-indigo-600 transition-all active:scale-95 ${isUpdating ? 'animate-spin text-indigo-600' : ''}`}
-          >
-            <RefreshCw size={18} />
-          </button>
+          <div className="flex items-center gap-2">
+            <div className="px-3 py-2 bg-white rounded-2xl shadow-sm flex items-center gap-1.5 border border-slate-50">
+              <Globe size={12} className="text-indigo-600" />
+              <span className="text-[10px] font-black text-slate-600">USD/KRW: {exchangeRate.toLocaleString()}</span>
+            </div>
+            <button 
+              onClick={onRefresh}
+              disabled={isUpdating}
+              className={`p-3 bg-white rounded-full shadow-sm text-slate-400 hover:text-indigo-600 transition-all active:scale-95 ${isUpdating ? 'animate-spin text-indigo-600' : ''}`}
+            >
+              <RefreshCw size={18} />
+            </button>
+          </div>
         </div>
 
         <div className="bg-indigo-600 rounded-[2.5rem] p-8 text-white shadow-2xl shadow-indigo-100 relative overflow-hidden">
