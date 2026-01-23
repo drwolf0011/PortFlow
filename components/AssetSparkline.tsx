@@ -17,7 +17,6 @@ export const AssetSparkline: React.FC<AssetSparklineProps> = ({ ticker, name, is
   const containerRef = useRef<HTMLDivElement>(null);
   const [isVisible, setIsVisible] = useState(false);
   
-  // 마지막으로 데이터를 가져온 리프레시 틱을 기록함
   const lastFetchedTick = useRef<number>(-1);
 
   // IntersectionObserver를 이용해 화면에 보일 때만 렌더링 준비
@@ -36,17 +35,21 @@ export const AssetSparkline: React.FC<AssetSparklineProps> = ({ ticker, name, is
   }, []);
 
   useEffect(() => {
-    // 화면에 보이지 않거나, 이미 현재 틱(회차)에 데이터를 가져왔다면 호출 스킵
     if (!isVisible) return;
     if (lastFetchedTick.current === refreshTick && data.length > 0) return;
 
     let isMounted = true;
     const fetchHistory = async () => {
+      // 429 에러 방지를 위해 여러 개의 스파크라인이 동시에 호출될 때 랜덤하게 0~5초 대기 (Stagger)
+      const staggerDelay = Math.random() * 5000;
+      await new Promise(r => setTimeout(r, staggerDelay));
+
+      if (!isMounted) return;
+
       try {
         const cacheKey = `history_${ticker}_${name}`;
         const cached = sessionStorage.getItem(cacheKey);
         
-        // 캐시가 있고, 현재가 강제 리프레시 요청(refreshTick > 0)이 아닌 경우 캐시 사용
         if (cached && refreshTick === 0) {
             setData(JSON.parse(cached));
             setLoading(false);
@@ -54,7 +57,6 @@ export const AssetSparkline: React.FC<AssetSparklineProps> = ({ ticker, name, is
             return;
         }
 
-        // 캐시가 없거나, 사용자가 리프레시 버튼을 누른 경우 API 호출
         setLoading(true);
         const points = await getAssetHistory(ticker || '', name);
         
@@ -67,7 +69,6 @@ export const AssetSparkline: React.FC<AssetSparklineProps> = ({ ticker, name, is
             } catch (e) { /* ignore */ }
           }
           setLoading(false);
-          // 호출 완료 후 현재 틱 저장 (중복 호출 방지)
           lastFetchedTick.current = refreshTick;
         }
       } catch (err) {

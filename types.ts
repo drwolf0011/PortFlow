@@ -1,8 +1,9 @@
 
 export enum AssetType {
   STOCK = '주식',
-  BOND = '채권',
-  PENSION = '연금',
+  FUND = '펀드',
+  ETF = 'ETF',
+  GOLD = '금',
   CASH = '현금'
 }
 
@@ -11,22 +12,31 @@ export enum TransactionType {
   SELL = '매도'
 }
 
+export enum AccountType {
+  GENERAL = '종합(위탁)',
+  ISA = 'ISA(중개형)',
+  PENSION = '개인연금',
+  IRP = '퇴직연금(IRP)',
+  DC = '퇴직연금(DC)'
+}
+
 export interface Account {
   id: string;
   institution: string;
   accountNumber: string;
   nickname: string;
+  type: AccountType; // Added: 계좌 유형
   color?: string;
-  isHidden?: boolean; // 계좌 숨기기 상태
+  isHidden?: boolean; 
 }
 
 export interface Transaction {
   id: string;
   assetId?: string;
-  accountId?: string; // 연결된 계좌 ID
+  accountId?: string; 
   date: string;
   type: TransactionType;
-  assetType: AssetType; // 추가: 거래되는 자산의 종류
+  assetType: AssetType; 
   institution: string;
   name: string;
   quantity: number;
@@ -37,14 +47,14 @@ export interface Transaction {
 
 export interface Asset {
   id: string;
-  accountId?: string; // 연결된 계좌 ID
+  accountId?: string; 
   name: string;
   ticker?: string;
   type: AssetType;
   institution: string;
   quantity: number;
   purchasePrice: number;
-  purchasePriceKRW?: number; // Added: 원화 환산 평균 매수 단가 (환율 반영)
+  purchasePriceKRW?: number; 
   currentPrice: number;
   currency: 'KRW' | 'USD';
 }
@@ -63,6 +73,17 @@ export interface AIAnalysis {
     targetWeight: number;
   }[];
   sources: { title: string; uri: string }[];
+}
+
+export interface UserProfile {
+  name: string;
+  id: string;
+  cloudSync?: {
+    apiKey: string;
+    binId: string;
+  };
+  investmentGoal?: string; // 예: "노후 자금 마련", "5년 내 주택 구입"
+  goalPrompt?: string;     // AI가 생성한 상세 지침 프롬프트
 }
 
 // --- AI Strategy Types (Moved from geminiService) ---
@@ -107,7 +128,7 @@ export interface SyncConfig {
   apiKey: string;
   binId: string;
   lastSynced: string;
-  lastSyncedDataTimestamp?: number; // Added for version control
+  lastSyncedDataTimestamp?: number; 
   autoSync: boolean;
 }
 
@@ -115,7 +136,7 @@ export interface AppData {
   assets: Asset[];
   transactions: Transaction[];
   accounts: Account[];
-  user: any;
+  user: UserProfile | null;
   history: {date: string, value: number}[];
   lastUpdated: string;
   exchangeRate: number;

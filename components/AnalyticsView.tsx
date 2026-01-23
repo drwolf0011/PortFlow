@@ -10,7 +10,6 @@ import {
   Layers, Package, Tag, ArrowRight
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import { AssetSparkline } from './AssetSparkline';
 
 interface AnalyticsViewProps {
   history: {date: string, value: number}[];
@@ -144,17 +143,16 @@ const AnalyticsView: React.FC<AnalyticsViewProps> = ({ history, assets, exchange
                     const isPlus = profitRate >= 0;
                     return (
                       <div key={a.id} className="bg-slate-50/50 border border-slate-100/50 rounded-2xl p-4 transition-all hover:bg-white hover:shadow-md hover:border-indigo-100">
-                        <div className="flex justify-between items-start mb-3">
+                        <div className="flex justify-between items-start">
                           <div className="flex items-center gap-3">
                             <div className={`w-9 h-9 rounded-xl flex items-center justify-center text-[10px] font-black ${a.currency === 'KRW' ? 'bg-blue-50 text-blue-600' : 'bg-amber-50 text-amber-600'}`}>{a.ticker ? a.ticker.substring(0, 4) : a.name.substring(0, 1)}</div>
                             <div><p className="text-xs font-black text-slate-800">{a.name}</p><p className="text-[9px] font-bold text-slate-400">{a.institution}</p></div>
                           </div>
-                          <div className="flex items-center gap-3">
-                            <div className="w-16 h-8 hidden sm:block"><AssetSparkline ticker={a.ticker} name={a.name} isPlus={isPlus} refreshTick={refreshTick} /></div>
-                            <div className="text-right"><p className="text-sm font-black text-slate-900">{Math.floor(totalVal).toLocaleString()}원</p><span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${isPlus ? 'bg-rose-50 text-rose-500' : 'bg-blue-50 text-blue-500'}`}>{isPlus ? '+' : ''}{profitRate.toFixed(2)}%</span></div>
+                          <div className="text-right">
+                            <p className="text-sm font-black text-slate-900">{Math.floor(totalVal).toLocaleString()}원</p>
+                            <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${isPlus ? 'bg-rose-50 text-rose-500' : 'bg-blue-50 text-blue-500'}`}>{isPlus ? '+' : ''}{profitRate.toFixed(2)}%</span>
                           </div>
                         </div>
-                        <div className="sm:hidden w-full h-8 mb-3"><AssetSparkline ticker={a.ticker} name={a.name} isPlus={isPlus} refreshTick={refreshTick} /></div>
                       </div>
                     );
                   })}

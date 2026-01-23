@@ -6,11 +6,12 @@ import {
   RefreshCw, Building2, PieChart as PieChartIcon, 
   ChevronRight, Clock, Target, ShieldAlert, Zap, Globe, ListFilter,
   X, Info, CheckCircle2, AlertTriangle, HelpCircle, ShieldCheck, Activity,
-  AreaChart as AreaChartIcon, Layers
+  Layers, Coins, ArrowRightLeft, Trophy, AlertCircle,
+  TrendingDown, Landmark, Tag
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { 
-  AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer,
+  Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, Legend
 } from 'recharts';
 
@@ -26,18 +27,19 @@ interface DashboardProps {
   exchangeRate: number;
 }
 
-const COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ec4899', '#8b5cf6', '#64748b'];
+const COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ec4899', '#8b5cf6', '#64748b', '#2dd4bf', '#fb7185'];
 
 const Dashboard: React.FC<DashboardProps> = ({ assets, accounts, user, onRefresh, isUpdating, lastUpdated, history, exchangeRate }) => {
   const [isScoreModalOpen, setIsScoreModalOpen] = useState(false);
   const [isRiskModalOpen, setIsRiskModalOpen] = useState(false);
-  const [chartTab, setChartTab] = useState<'TYPE' | 'INST'>('TYPE');
+  const [compTab, setCompTab] = useState<'TYPE' | 'INST' | 'CURRENCY' | 'TICKER'>('TYPE');
 
   const stats = useMemo(() => {
     let total = 0, totalCost = 0;
     const typeDist: Record<string, { val: number; cost: number }> = {};
-    const instDist: Record<string, number> = {};
+    const instDist: Record<string, { val: number; profit: number; count: number }> = {};
     const currencyDist: Record<string, number> = { KRW: 0, USD: 0 };
+    const tickerDist: Record<string, number> = {};
     
     const hiddenAccountIds = new Set(accounts.filter(a => a.isHidden).map(a => a.id));
 
@@ -45,12 +47,12 @@ const Dashboard: React.FC<DashboardProps> = ({ assets, accounts, user, onRefresh
       .map(a => {
         const mult = a.currency === 'USD' ? (exchangeRate || 1350) : 1;
         const currentVal = (Number(a.currentPrice) || 0) * (Number(a.quantity) || 0) * mult;
-        
-        // Accurate Cost Basis using purchasePriceKRW if available
         const defaultPriceKRW = a.purchasePrice * (a.currency === 'USD' ? (exchangeRate || 1350) : 1);
         const costVal = (a.quantity || 0) * (a.purchasePriceKRW || defaultPriceKRW);
+        const profit = currentVal - costVal;
+        const profitRate = costVal > 0 ? (profit / costVal) * 100 : 0;
         
-        return { ...a, currentVal, costVal, profit: currentVal - costVal };
+        return { ...a, currentVal, costVal, profit, profitRate };
       })
       .sort((a, b) => b.currentVal - a.currentVal);
 
@@ -62,20 +64,31 @@ const Dashboard: React.FC<DashboardProps> = ({ assets, accounts, user, onRefresh
       typeDist[a.type].val += a.currentVal;
       typeDist[a.type].cost += a.costVal;
 
-      instDist[a.institution] = (instDist[a.institution] || 0) + a.currentVal;
+      if (!instDist[a.institution]) instDist[a.institution] = { val: 0, profit: 0, count: 0 };
+      instDist[a.institution].val += a.currentVal;
+      instDist[a.institution].profit += a.profit;
+      instDist[a.institution].count += 1;
+
       currencyDist[a.currency] = (currencyDist[a.currency] || 0) + a.currentVal;
+
+      const tickerKey = a.name || a.ticker || '기타';
+      tickerDist[tickerKey] = (tickerDist[tickerKey] || 0) + a.currentVal;
     });
 
     const profit = total - totalCost;
     const profitRate = totalCost > 0 ? (profit / totalCost) * 100 : 0;
 
-    const topInst = Object.entries(instDist).sort((a, b) => b[1] - a[1])[0];
-    const instRiskWeight = total > 0 ? (topInst ? topInst[1] / total : 0) : 0;
+    // Best / Worst Performance
+    const winners = [...processedAssets].filter(a => a.costVal > 0).sort((a, b) => b.profitRate - a.profitRate).slice(0, 3);
+    const losers = [...processedAssets].filter(a => a.costVal > 0).sort((a, b) => a.profitRate - b.profitRate).slice(0, 3);
+
+    const topInstEntry = Object.entries(instDist).sort((a, b) => b[1].val - a[1].val)[0];
+    const instRiskWeight = total > 0 ? (topInstEntry ? topInstEntry[1].val / total : 0) : 0;
     const stockWeight = total > 0 ? (typeDist[AssetType.STOCK]?.val || 0) / total : 0;
     const currencyRiskWeight = total > 0 ? Math.max(...Object.values(currencyDist)) / total : 1;
 
     const riskBreakdown = {
-      inst: { score: Math.max(0, 100 - instRiskWeight * 100), label: topInst?.[0] || '없음', weight: instRiskWeight },
+      inst: { score: Math.max(0, 100 - instRiskWeight * 100), label: topInstEntry?.[0] || '없음', weight: instRiskWeight },
       asset: { score: Math.max(0, 100 - stockWeight * 100), label: '주식 비중', weight: stockWeight },
       currency: { score: Math.max(0, 100 - (currencyRiskWeight > 0.9 ? 50 : 0)), label: '외환 노출', weight: currencyRiskWeight }
     };
@@ -89,48 +102,30 @@ const Dashboard: React.FC<DashboardProps> = ({ assets, accounts, user, onRefresh
 
     return { 
       total, profit, profitRate, processedAssets, 
-      typeDist, instDist, currencyDist, healthScore,
-      riskLevel: overallRisk, riskBreakdown, topInstName: topInst?.[0]
+      typeDist, instDist, currencyDist, tickerDist, healthScore,
+      riskLevel: overallRisk, riskBreakdown, topInstName: topInstEntry?.[0],
+      winners, losers
     };
   }, [assets, accounts, exchangeRate]);
 
   const pieChartData = useMemo(() => {
-    if (chartTab === 'TYPE') {
+    if (compTab === 'TYPE') {
       return Object.entries(stats.typeDist).map(([name, data]) => ({ name, value: (data as { val: number }).val })).filter(d => d.value > 0);
+    } else if (compTab === 'INST') {
+      return Object.entries(stats.instDist).map(([name, data]) => ({ name, value: (data as { val: number }).val })).filter(d => d.value > 0);
+    } else if (compTab === 'CURRENCY') {
+      return Object.entries(stats.currencyDist).map(([name, value]) => ({ name, value: value as number })).filter(d => d.value > 0);
     } else {
-      return Object.entries(stats.instDist).map(([name, value]) => ({ name, value: value as number })).filter(d => d.value > 0);
+      return Object.entries(stats.tickerDist)
+        .map(([name, value]) => ({ name, value: value as number }))
+        .filter(d => d.value > 0)
+        .sort((a,b) => b.value - a.value)
+        .slice(0, 8);
     }
-  }, [stats, chartTab]);
-
-  const chartData = useMemo(() => {
-    if (history.length === 0) return [];
-    const weeklyData: { name: string, value: number }[] = [];
-    for (let i = history.length - 1; i >= 0; i -= 7) {
-      const point = history[i];
-      const weekNum = Math.ceil((history.length - i) / 7);
-      weeklyData.unshift({
-        name: `${weekNum}주 전`,
-        value: point.value
-      });
-      if (weeklyData.length >= 52) break;
-    }
-    if (weeklyData.length > 0) {
-      weeklyData[weeklyData.length - 1].name = "현재";
-    }
-    return weeklyData;
-  }, [history]);
-
-  const dailyChange = useMemo(() => {
-    if (history.length < 2) return { val: 0, rate: 0 };
-    const latest = history[history.length - 1].value;
-    const prev = history[history.length - 2].value;
-    const diff = latest - prev;
-    const rate = prev > 0 ? (diff / prev) * 100 : 0;
-    return { val: diff, rate };
-  }, [history]);
+  }, [stats, compTab]);
 
   return (
-    <div className="p-5 space-y-6 pb-28">
+    <div className="p-5 space-y-6 pb-40">
       <section className="space-y-4">
         <div className="flex items-center justify-between">
           <div className="flex flex-col">
@@ -138,7 +133,7 @@ const Dashboard: React.FC<DashboardProps> = ({ assets, accounts, user, onRefresh
               안녕하세요, <span className="text-indigo-600">{user?.name || '사용자'}</span>님
             </h2>
             <div className="flex items-center gap-1.5 text-[10px] font-bold text-slate-400 mt-1">
-              <Clock size={12} /> {lastUpdated || '시세 확인 중...'}
+              <Clock size={12} className={isUpdating ? 'animate-pulse text-indigo-500' : ''} /> {isUpdating ? '실시간 현재가 반영 중...' : (lastUpdated || '시세 확인 중...')}
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -167,34 +162,75 @@ const Dashboard: React.FC<DashboardProps> = ({ assets, accounts, user, onRefresh
                 {stats.profitRate.toFixed(1)}% ({Math.floor(stats.profit).toLocaleString()}원)
               </div>
               <div className="bg-white/10 px-4 py-2 rounded-2xl text-xs font-black flex items-center gap-1.5">
-                <Globe size={14} /> USD {(Number(stats.currencyDist.USD || 0) / (stats.total || 1) * 100).toFixed(0)}%
+                <Coins size={14} /> {stats.currencyDist.USD > 0 ? `해외 ${(stats.currencyDist.USD / stats.total * 100).toFixed(0)}%` : '국내 100%'}
               </div>
             </div>
           </div>
         </div>
       </section>
 
-      {/* Portfolio Composition Chart Section */}
+      {/* Institution Distribution Summary */}
       <section className="bg-white rounded-[2.5rem] p-6 shadow-sm border border-slate-50">
-        <div className="flex items-center justify-between mb-6">
-          <div className="flex items-center gap-2">
-            <div className="p-2 bg-indigo-50 text-indigo-600 rounded-xl">
-              <PieChartIcon size={18} />
+         <div className="flex items-center gap-2 mb-6">
+            <div className="p-2 bg-slate-50 text-slate-500 rounded-xl">
+              <Landmark size={18} />
             </div>
-            <h4 className="font-black text-slate-800 text-sm">포트폴리오 구성</h4>
+            <h4 className="font-black text-slate-800 text-sm">금융기관별 분산 투자 현황</h4>
+         </div>
+         <div className="grid grid-cols-2 gap-3">
+            {Object.entries(stats.instDist).map(([name, data]: [string, any], idx) => (
+              <div key={name} className="p-4 bg-slate-50 rounded-2xl border border-slate-100/50">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-[10px] font-black text-slate-400 truncate pr-2">{name}</span>
+                  <span className="text-[9px] font-black text-indigo-500 px-1.5 py-0.5 bg-indigo-50 rounded-lg">{data.count}건</span>
+                </div>
+                <p className="text-sm font-black text-slate-800">{Math.floor(data.val).toLocaleString()}원</p>
+                <div className="flex items-center gap-1 mt-1">
+                   {data.profit >= 0 ? <TrendingUp size={10} className="text-rose-500" /> : <TrendingDown size={10} className="text-blue-500" />}
+                   <span className={`text-[10px] font-bold ${data.profit >= 0 ? 'text-rose-500' : 'text-blue-500'}`}>
+                    {data.profit >= 0 ? '+' : ''}{(data.profit / (data.val - data.profit) * 100).toFixed(1)}%
+                   </span>
+                </div>
+              </div>
+            ))}
+         </div>
+      </section>
+
+      {/* Portfolio Composition Sections with Multi-Tabs */}
+      <section className="bg-white rounded-[2.5rem] p-6 shadow-sm border border-slate-50">
+        <div className="flex flex-col gap-6 mb-6">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <div className="p-2 bg-indigo-50 text-indigo-600 rounded-xl">
+                <PieChartIcon size={18} />
+              </div>
+              <h4 className="font-black text-slate-800 text-sm">포트폴리오 다차원 분석</h4>
+            </div>
           </div>
-          <div className="flex bg-slate-100 rounded-xl p-1">
+          <div className="flex bg-slate-100 rounded-2xl p-1 shadow-inner overflow-x-auto no-scrollbar">
             <button 
-              onClick={() => setChartTab('TYPE')}
-              className={`px-3 py-1.5 rounded-lg text-[10px] font-black transition-all ${chartTab === 'TYPE' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-400'}`}
+              onClick={() => setCompTab('TYPE')}
+              className={`flex-1 py-2.5 px-3 rounded-xl text-[11px] font-black transition-all flex items-center justify-center gap-1.5 whitespace-nowrap ${compTab === 'TYPE' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-400'}`}
             >
-              자산별
+              <Layers size={14} /> 자산별
             </button>
             <button 
-              onClick={() => setChartTab('INST')}
-              className={`px-3 py-1.5 rounded-lg text-[10px] font-black transition-all ${chartTab === 'INST' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-400'}`}
+              onClick={() => setCompTab('INST')}
+              className={`flex-1 py-2.5 px-3 rounded-xl text-[11px] font-black transition-all flex items-center justify-center gap-1.5 whitespace-nowrap ${compTab === 'INST' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-400'}`}
             >
-              기관별
+              <Building2 size={14} /> 기관별
+            </button>
+            <button 
+              onClick={() => setCompTab('CURRENCY')}
+              className={`flex-1 py-2.5 px-3 rounded-xl text-[11px] font-black transition-all flex items-center justify-center gap-1.5 whitespace-nowrap ${compTab === 'CURRENCY' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-400'}`}
+            >
+              <Globe size={14} /> 통화별
+            </button>
+            <button 
+              onClick={() => setCompTab('TICKER')}
+              className={`flex-1 py-2.5 px-3 rounded-xl text-[11px] font-black transition-all flex items-center justify-center gap-1.5 whitespace-nowrap ${compTab === 'TICKER' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-400'}`}
+            >
+              <Tag size={14} /> 종목별
             </button>
           </div>
         </div>
@@ -204,20 +240,28 @@ const Dashboard: React.FC<DashboardProps> = ({ assets, accounts, user, onRefresh
             <PieChart>
               <Pie
                 data={pieChartData}
-                innerRadius={60}
-                outerRadius={80}
+                innerRadius={65}
+                outerRadius={85}
                 paddingAngle={5}
                 dataKey="value"
                 stroke="none"
+                animationDuration={1000}
               >
                 {pieChartData.map((entry, index) => (
                   <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                 ))}
               </Pie>
               <Tooltip 
-                contentStyle={{ borderRadius: '1rem', border: 'none', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)', padding: '8px 12px' }}
-                itemStyle={{ fontSize: '11px', fontWeight: '900', color: '#1e293b' }}
-                formatter={(value: number) => [`${value.toLocaleString()}원`, '평가금액']}
+                contentStyle={{ 
+                  backgroundColor: '#ffffff',
+                  borderRadius: '1.2rem', 
+                  border: 'none', 
+                  boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)', 
+                  padding: '12px 16px',
+                  zIndex: 100
+                }}
+                itemStyle={{ fontSize: '12px', fontWeight: '900', color: '#1e293b' }}
+                formatter={(value: number, name: string) => [`${value.toLocaleString()}원`, name]}
               />
               <Legend 
                 verticalAlign="bottom" 
@@ -228,78 +272,58 @@ const Dashboard: React.FC<DashboardProps> = ({ assets, accounts, user, onRefresh
               />
             </PieChart>
           </ResponsiveContainer>
-          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 -mt-4 text-center pointer-events-none">
-            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Total</p>
-            <p className="text-sm font-black text-slate-800">{stats.total > 100000000 ? `${(stats.total/100000000).toFixed(1)}억` : `${(stats.total/10000).toFixed(0)}만`}</p>
-          </div>
         </div>
       </section>
 
-      <section className="bg-white rounded-[2.5rem] p-6 shadow-sm border border-slate-50 overflow-hidden">
-        <div className="flex items-center justify-between mb-6">
-          <div className="flex items-center gap-2">
-            <div className="p-2 bg-indigo-50 text-indigo-600 rounded-xl">
-              <AreaChartIcon size={18} />
-            </div>
-            <div>
-              <h4 className="font-black text-slate-800 text-sm">자산 증감 추이</h4>
-              <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">52-Week Asset Trend (Weekly)</p>
-            </div>
+      {/* Performance Leaders Section */}
+      <section className="bg-white rounded-[2.5rem] p-6 shadow-sm border border-slate-50">
+        <div className="flex items-center gap-2 mb-6">
+          <div className="p-2 bg-emerald-50 text-emerald-600 rounded-xl">
+            <Trophy size={18} />
           </div>
-          <div className="text-right">
-            <p className={`text-xs font-black flex items-center justify-end gap-1 ${dailyChange.val >= 0 ? 'text-rose-500' : 'text-blue-500'}`}>
-              {dailyChange.val >= 0 ? <ArrowUpRight size={14} /> : <ArrowDownRight size={14} />}
-              {Math.abs(dailyChange.val).toLocaleString()}원
-            </p>
-            <p className="text-[9px] font-bold text-slate-300">전일 대비 {dailyChange.rate.toFixed(1)}%</p>
-          </div>
-        </div>
-
-        <div className="h-40 w-full -ml-4">
-          <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={chartData}>
-              <defs>
-                <linearGradient id="colorVal" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#6366F1" stopOpacity={0.15}/>
-                  <stop offset="95%" stopColor="#6366F1" stopOpacity={0}/>
-                </linearGradient>
-              </defs>
-              <XAxis dataKey="name" hide />
-              <YAxis hide domain={['dataMin - 10000', 'dataMax + 10000']} />
-              <Tooltip 
-                contentStyle={{ borderRadius: '1rem', border: 'none', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)', fontSize: '11px', fontWeight: 'bold' }}
-                formatter={(value: number) => [`${value.toLocaleString()}원`, '총 자산']}
-                labelStyle={{ color: '#94a3b8' }}
-              />
-              <Area 
-                type="monotone" 
-                dataKey="value" 
-                stroke="#6366F1" 
-                strokeWidth={3} 
-                fillOpacity={1} 
-                fill="url(#colorVal)" 
-                animationDuration={1500}
-              />
-            </AreaChart>
-          </ResponsiveContainer>
+          <h4 className="font-black text-slate-800 text-sm">수익률 Best & Worst</h4>
         </div>
         
-        <div className="mt-4 flex items-center justify-center gap-1.5">
-          <div className="w-1.5 h-1.5 rounded-full bg-indigo-500"></div>
-          <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">52-Week Historical Performance</p>
+        <div className="space-y-6">
+          <div className="space-y-3">
+            <p className="text-[10px] font-black text-emerald-600 uppercase tracking-widest flex items-center gap-1.5"><TrendingUp size={12}/> Top Gainers</p>
+            {stats.winners.length > 0 ? stats.winners.map((a, i) => (
+              <div key={a.id} className="flex items-center justify-between bg-emerald-50/30 p-3 rounded-2xl border border-emerald-50">
+                <div className="flex items-center gap-3">
+                  <span className="text-xs font-black text-emerald-600">#{i+1}</span>
+                  <div><p className="text-xs font-black text-slate-800">{a.name}</p><p className="text-[9px] font-bold text-slate-400">{a.institution}</p></div>
+                </div>
+                <p className="text-xs font-black text-emerald-600">+{a.profitRate.toFixed(1)}%</p>
+              </div>
+            )) : <p className="text-[10px] text-slate-300 italic text-center py-2">성과 데이터가 부족합니다.</p>}
+          </div>
+
+          <div className="space-y-3">
+            <p className="text-[10px] font-black text-rose-500 uppercase tracking-widest flex items-center gap-1.5"><TrendingDown size={12}/> Needs Review</p>
+            {stats.losers.length > 0 ? stats.losers.map((a, i) => (
+              <div key={a.id} className="flex items-center justify-between bg-rose-50/30 p-3 rounded-2xl border border-rose-50">
+                <div className="flex items-center gap-3">
+                  <span className="text-xs font-black text-rose-500">#{i+1}</span>
+                  <div><p className="text-xs font-black text-slate-800">{a.name}</p><p className="text-[9px] font-bold text-slate-400">{a.institution}</p></div>
+                </div>
+                <p className="text-xs font-black text-rose-500">{a.profitRate.toFixed(1)}%</p>
+              </div>
+            )) : <p className="text-[10px] text-slate-300 italic text-center py-2">성과 데이터가 부족합니다.</p>}
+          </div>
         </div>
       </section>
 
+      {/* AI Score and Risk Quick View */}
       <section className="grid grid-cols-2 gap-4">
         <button 
           onClick={() => setIsScoreModalOpen(true)}
-          className="bg-white p-5 rounded-[2rem] shadow-sm border border-slate-50 flex flex-col text-left active:scale-95 transition-all group"
+          className="bg-white p-5 rounded-[2.5rem] shadow-sm border border-slate-50 flex flex-col text-left active:scale-95 transition-all group"
         >
           <div className="flex items-center justify-between mb-3">
             <div className="p-2 bg-indigo-50 text-indigo-600 rounded-xl group-hover:bg-indigo-600 group-hover:text-white transition-colors"><Zap size={18} /></div>
-            <span className="text-[10px] font-black text-slate-300 flex items-center gap-0.5">상세 <ChevronRight size={10}/></span>
+            <ChevronRight size={12} className="text-slate-300"/>
           </div>
-          <p className="text-[10px] font-black text-slate-400 uppercase">AI Smart Score</p>
+          <p className="text-[10px] font-black text-slate-400 uppercase mb-1">Health Score</p>
           <p className="text-xl font-black text-slate-800">{Math.floor(stats.healthScore)}점</p>
           <div className="mt-2 h-1 bg-slate-100 rounded-full overflow-hidden w-full">
             <div className="h-full bg-indigo-500" style={{ width: `${stats.healthScore}%` }}></div>
@@ -308,7 +332,7 @@ const Dashboard: React.FC<DashboardProps> = ({ assets, accounts, user, onRefresh
 
         <button 
           onClick={() => setIsRiskModalOpen(true)}
-          className={`p-5 rounded-[2rem] shadow-sm border flex flex-col text-left active:scale-95 transition-all group ${
+          className={`p-5 rounded-[2.5rem] shadow-sm border flex flex-col text-left active:scale-95 transition-all group ${
             stats.riskLevel === 'HIGH' ? 'bg-rose-50 border-rose-100' : 'bg-white border-slate-50'
           }`}
         >
@@ -318,39 +342,37 @@ const Dashboard: React.FC<DashboardProps> = ({ assets, accounts, user, onRefresh
             }`}>
               <ShieldAlert size={18} className={stats.riskLevel === 'HIGH' ? 'animate-pulse' : ''} />
             </div>
-            <span className="text-[10px] font-black text-slate-300 flex items-center gap-0.5">분석 <ChevronRight size={10}/></span>
+            <ChevronRight size={12} className="text-slate-300"/>
           </div>
-          <p className="text-[10px] font-black text-slate-400 uppercase">Risk Level</p>
+          <p className="text-[10px] font-black text-slate-400 uppercase mb-1">Risk Status</p>
           <p className={`text-xl font-black ${stats.riskLevel === 'HIGH' ? 'text-rose-600' : 'text-slate-800'}`}>
-            {stats.riskLevel === 'HIGH' ? '위험 감지' : stats.riskLevel === 'MEDIUM' ? '주의' : '안전'}
+            {stats.riskLevel === 'HIGH' ? '위험 감지' : stats.riskLevel === 'MEDIUM' ? '주의' : '안정'}
           </p>
           <div className="mt-2 flex gap-1 items-center">
             {[1, 2, 3].map((i) => (
-              <div 
-                key={i} 
-                className={`h-1 flex-1 rounded-full ${
-                  (stats.riskLevel === 'LOW' && i === 1) ? 'bg-emerald-500' :
-                  (stats.riskLevel === 'MEDIUM' && i <= 2) ? 'bg-amber-500' :
-                  (stats.riskLevel === 'HIGH') ? 'bg-rose-500' : 'bg-slate-100'
-                }`}
-              ></div>
+              <div key={i} className={`h-1 flex-1 rounded-full ${
+                (stats.riskLevel === 'LOW' && i === 1) ? 'bg-emerald-500' :
+                (stats.riskLevel === 'MEDIUM' && i <= 2) ? 'bg-amber-500' :
+                (stats.riskLevel === 'HIGH') ? 'bg-rose-500' : 'bg-slate-100'
+              }`}></div>
             ))}
           </div>
         </button>
       </section>
 
+      {/* TOP 5 List with Link */}
       <section className="bg-white rounded-[2.5rem] p-6 shadow-sm border border-slate-50">
         <div className="flex items-center justify-between mb-6">
           <h4 className="font-black text-slate-800 flex items-center gap-2">
-            <ListFilter size={18} className="text-indigo-600" /> TOP 5 종목
+            <ListFilter size={18} className="text-indigo-600" /> 보유 비중 TOP 5
           </h4>
-          <Link to="/assets" className="text-[10px] font-black text-indigo-600">상세보기</Link>
+          <Link to="/assets" className="text-[10px] font-black text-indigo-600 flex items-center gap-0.5 hover:underline transition-all">전체보기 <ChevronRight size={10}/></Link>
         </div>
-        <div className="space-y-4">
+        <div className="space-y-5">
           {stats.processedAssets.slice(0, 5).map(asset => (
-            <div key={asset.id} className="flex items-center justify-between p-1">
+            <div key={asset.id} className="flex items-center justify-between group">
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 bg-slate-50 rounded-xl flex items-center justify-center font-black text-[10px] text-slate-400 uppercase">
+                <div className="w-10 h-10 bg-slate-50 border border-slate-100 rounded-xl flex items-center justify-center font-black text-[10px] text-slate-400 uppercase group-hover:border-indigo-100 group-hover:bg-indigo-50/30 transition-all">
                   {asset.ticker ? asset.ticker.substring(0, 3) : asset.name[0]}
                 </div>
                 <div>
@@ -360,15 +382,19 @@ const Dashboard: React.FC<DashboardProps> = ({ assets, accounts, user, onRefresh
               </div>
               <div className="text-right">
                 <p className="text-sm font-black text-slate-900">{Math.floor(asset.currentVal).toLocaleString()}원</p>
-                <p className={`text-[10px] font-bold ${asset.profit >= 0 ? 'text-rose-500' : 'text-blue-500'}`}>
-                  {asset.profit >= 0 ? '+' : ''}{((asset.profit / (asset.costVal || 1)) * 100).toFixed(1)}%
-                </p>
+                <div className="flex items-center justify-end gap-1.5 mt-0.5">
+                  <span className="text-[8px] font-black text-slate-300 uppercase tracking-widest">{(asset.currentVal / stats.total * 100).toFixed(1)}%</span>
+                  <p className={`text-[10px] font-bold ${asset.profit >= 0 ? 'text-rose-500' : 'text-blue-500'}`}>
+                    {asset.profit >= 0 ? '+' : ''}{asset.profitRate.toFixed(1)}%
+                  </p>
+                </div>
               </div>
             </div>
           ))}
         </div>
       </section>
 
+      {/* Diagnosis Modals (Scores & Risks) */}
       {isScoreModalOpen && (
         <div className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center p-0 sm:p-4">
           <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={() => setIsScoreModalOpen(false)}></div>
@@ -376,12 +402,12 @@ const Dashboard: React.FC<DashboardProps> = ({ assets, accounts, user, onRefresh
             <div className="px-8 pt-8 pb-4 flex justify-between items-center">
               <div>
                 <h3 className="text-2xl font-black text-slate-800">AI 포트폴리오 진단</h3>
-                <p className="text-[10px] font-black text-indigo-600 uppercase tracking-widest mt-0.5">Smart Score Analysis</p>
+                <p className="text-[10px] font-black text-indigo-600 uppercase tracking-widest mt-0.5">Score Analysis Report</p>
               </div>
               <button onClick={() => setIsScoreModalOpen(false)} className="p-2 bg-slate-50 rounded-full text-slate-400"><X size={20}/></button>
             </div>
             <div className="p-8 overflow-y-auto no-scrollbar pb-12">
-              <div className="flex flex-col items-center justify-center py-6 bg-indigo-50/30 rounded-[2rem] border border-indigo-50 mb-8">
+              <div className="flex flex-col items-center justify-center py-6 bg-indigo-50/30 rounded-[2.5rem] border border-indigo-50 mb-8">
                 <div className="relative w-32 h-32 flex items-center justify-center">
                   <svg className="w-full h-full rotate-[-90deg]">
                     <circle cx="64" cy="64" r="58" stroke="currentColor" strokeWidth="12" fill="transparent" className="text-slate-100" />
@@ -399,8 +425,9 @@ const Dashboard: React.FC<DashboardProps> = ({ assets, accounts, user, onRefresh
                 </div>
               </div>
               <div className="p-6 bg-slate-900 rounded-[2rem] text-white">
+                <h5 className="text-xs font-black text-indigo-400 mb-2 uppercase tracking-widest flex items-center gap-1.5"><ShieldCheck size={14}/> Advisor Opinion</h5>
                 <p className="text-xs font-medium text-slate-300 leading-relaxed">
-                  {stats.healthScore >= 80 ? "포트폴리오가 매우 건고합니다." : "관리가 필요한 영역이 있습니다."}
+                  {stats.healthScore >= 80 ? "포트폴리오 배분 상태가 우수합니다. 현재의 리밸런싱 주기를 유지하는 것을 추천합니다." : "특정 자산이나 기관에 대한 집중도가 높습니다. 분산 투자를 통해 안정성을 높일 필요가 있습니다."}
                 </p>
               </div>
             </div>
@@ -414,56 +441,54 @@ const Dashboard: React.FC<DashboardProps> = ({ assets, accounts, user, onRefresh
           <div className="relative bg-white w-full max-w-lg rounded-t-[2.5rem] sm:rounded-[2.5rem] shadow-2xl overflow-hidden animate-in slide-in-from-bottom duration-300 flex flex-col max-h-[90dvh]">
             <div className="px-8 pt-8 pb-4 flex justify-between items-center shrink-0">
               <div>
-                <h3 className="text-2xl font-black text-slate-800">리스크 심층 분석</h3>
-                <p className="text-[10px] font-black text-rose-500 uppercase tracking-widest mt-0.5">Security & Risk Report</p>
+                <h3 className="text-2xl font-black text-slate-800">리스크 상세 리포트</h3>
+                <p className="text-[10px] font-black text-rose-500 uppercase tracking-widest mt-0.5">Vulnerability Breakdown</p>
               </div>
               <button onClick={() => setIsRiskModalOpen(false)} className="p-2 bg-slate-50 rounded-full text-slate-400"><X size={20}/></button>
             </div>
 
             <div className="p-8 space-y-8 overflow-y-auto no-scrollbar pb-12">
-              <div className={`p-8 rounded-[2.5rem] flex flex-col items-center justify-center text-center transition-colors ${
+              <div className={`p-8 rounded-[2.5rem] flex flex-col items-center justify-center text-center ${
                 stats.riskLevel === 'HIGH' ? 'bg-rose-50 text-rose-600' : 'bg-emerald-50 text-emerald-600'
               }`}>
-                <div className={`w-20 h-20 rounded-full flex items-center justify-center mb-4 shadow-sm ${
-                  stats.riskLevel === 'HIGH' ? 'bg-rose-500 text-white' : 'bg-emerald-500 text-white'
+                <div className={`w-16 h-16 rounded-full flex items-center justify-center mb-4 ${
+                  stats.riskLevel === 'HIGH' ? 'bg-rose-500 text-white shadow-lg shadow-rose-200' : 'bg-emerald-500 text-white'
                 }`}>
-                  {stats.riskLevel === 'HIGH' ? <ShieldAlert size={40} /> : <ShieldCheck size={40} />}
+                  {stats.riskLevel === 'HIGH' ? <ShieldAlert size={32} /> : <ShieldCheck size={32} />}
                 </div>
-                <h4 className="text-2xl font-black mb-1">
-                  {stats.riskLevel === 'HIGH' ? '고위험 노출' : stats.riskLevel === 'MEDIUM' ? '위험 보통' : '자산 운용 안전'}
-                </h4>
-                <p className="text-[10px] font-black uppercase tracking-tighter opacity-60">Portfolio Integrity Status</p>
+                <h4 className="text-xl font-black mb-1">{stats.riskLevel === 'HIGH' ? '고위험 노출' : '운용 안전'}</h4>
+                <p className="text-[10px] font-black uppercase opacity-60">Security Integrity Status</p>
               </div>
 
               <div className="space-y-6">
                 <RiskFactorBar 
-                  label="기관 집중도" 
+                  label="금융사 집중도" 
                   weight={stats.riskBreakdown.inst.weight} 
-                  detail={`${stats.topInstName} 비중 ${Math.floor(stats.riskBreakdown.inst.weight * 100)}%`}
+                  detail={`${stats.topInstName || '없음'} 비중 ${Math.floor(stats.riskBreakdown.inst.weight * 100)}%`}
                   isHigh={stats.riskBreakdown.inst.weight > 0.5}
                 />
                 <RiskFactorBar 
                   label="자산 변동성" 
                   weight={stats.riskBreakdown.asset.weight} 
-                  detail={`변동 자산(주식 등) 비중 ${Math.floor(stats.riskBreakdown.asset.weight * 100)}%`}
+                  detail={`주식형 자산 비중 ${Math.floor(stats.riskBreakdown.asset.weight * 100)}%`}
                   isHigh={stats.riskBreakdown.asset.weight > 0.7}
                 />
                 <RiskFactorBar 
-                  label="통화 노출도" 
+                  label="통화 노출 리스크" 
                   weight={stats.riskBreakdown.currency.weight} 
                   detail={`단일 통화 집중도 ${Math.floor(stats.riskBreakdown.currency.weight * 100)}%`}
                   isHigh={stats.riskBreakdown.currency.weight > 0.9}
                 />
               </div>
 
-              <div className="p-6 bg-slate-50 border border-slate-100 rounded-[2rem] flex items-start gap-4">
-                <div className="p-2 bg-white rounded-xl shadow-sm"><Info size={20} className="text-indigo-600" /></div>
+              <div className="p-5 bg-slate-50 border border-slate-100 rounded-3xl flex items-start gap-4">
+                <div className="p-2 bg-white rounded-xl shadow-sm text-indigo-600"><AlertCircle size={20} /></div>
                 <div>
-                  <h5 className="text-sm font-black text-slate-800 mb-1">전문가 조언</h5>
-                  <p className="text-xs font-bold text-slate-400 leading-relaxed">
+                  <h5 className="text-sm font-black text-slate-800 mb-1">대응 가이드라인</h5>
+                  <p className="text-xs font-bold text-slate-400 leading-relaxed italic">
                     {stats.riskLevel === 'HIGH' 
-                      ? "자산의 50% 이상이 한 기관이나 종목에 집중되어 있습니다. 손실 발생 시 치명적일 수 있으니 분산 투자를 권고합니다."
-                      : "전체적으로 안정적인 배분 상태입니다. 다만, 정기적인 시세 업데이트를 통해 예상치 못한 변동성을 체크하세요."}
+                      ? "특정 영역에 자산이 과도하게 쏠려 있습니다. AI 조언 탭에서 제안하는 리밸런싱 전략을 검토하여 하방 리스크를 제한하십시오."
+                      : "전반적으로 안정적인 구조입니다. 현재 비중을 유지하며 정기적인 시세 동기화를 통해 돌발 변수를 체크하세요."}
                   </p>
                 </div>
               </div>
@@ -479,11 +504,11 @@ const RiskFactorBar: React.FC<{ label: string; weight: number; detail: string; i
   <div className="space-y-2">
     <div className="flex items-center justify-between">
       <div className="flex items-center gap-2">
-        <Activity size={14} className={isHigh ? 'text-rose-500' : 'text-indigo-600'} />
+        <div className={`w-1.5 h-1.5 rounded-full ${isHigh ? 'bg-rose-500' : 'bg-indigo-600'}`}></div>
         <span className="text-xs font-black text-slate-700">{label}</span>
       </div>
-      <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${isHigh ? 'bg-rose-100 text-rose-600' : 'bg-slate-100 text-slate-400'}`}>
-        {isHigh ? '높음' : '안정'}
+      <span className={`text-[9px] font-black px-2 py-0.5 rounded-full ${isHigh ? 'bg-rose-100 text-rose-600' : 'bg-slate-100 text-slate-400'}`}>
+        {isHigh ? '주의' : '정상'}
       </span>
     </div>
     <div className="h-2.5 bg-slate-100 rounded-full overflow-hidden flex">

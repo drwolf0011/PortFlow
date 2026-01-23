@@ -33,6 +33,19 @@
             scrollbar-width: none;
         }
 
+        /* Safe Area Utilities */
+        .pb-safe {
+            padding-bottom: env(safe-area-inset-bottom);
+        }
+        .pt-safe {
+            padding-top: env(safe-area-inset-top);
+        }
+
+        /* Custom Shadows */
+        .shadow-top {
+            box-shadow: 0 -4px 12px -2px rgba(0, 0, 0, 0.05);
+        }
+
         /* Animation Keyframes for UI components */
         @keyframes enter {
             from { opacity: 0; transform: scale(0.95); }

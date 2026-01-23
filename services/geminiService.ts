@@ -1,6 +1,6 @@
 
 import { GoogleGenAI, GenerateContentResponse, Type } from "@google/genai";
-import { Asset, AssetType, RebalancingStrategy } from "../types";
+import { Asset, AssetType, RebalancingStrategy, Account, AccountType, UserProfile } from "../types";
 
 export interface AnalysisResponse {
   currentDiagnosis: string;
@@ -45,9 +45,11 @@ const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 class RequestQueue {
   private queue: (() => Promise<void>)[] = [];
   private activeCount = 0;
-  private maxConcurrency = 2; 
+  // 429 에러 방지를 위해 동시 실행 수를 1로 제한 (Strict Serial)
+  private maxConcurrency = 1; 
   private lastRequestTime = 0;
-  private minInterval = 1000;
+  // 요청 간 최소 간격을 2초로 늘려 안정성 확보
+  private minInterval = 2000;
 
   async add<T>(task: () => Promise<T>): Promise<T> {
     return new Promise((resolve, reject) => {
@@ -101,7 +103,7 @@ async function generateContentWithRetry(
 
   const apiCall = async () => {
     let lastError;
-    const maxRetries = 3;
+    const maxRetries = 4; // 재시도 횟수 상향
     for (let i = 0; i < maxRetries; i++) {
       try {
         return await ai.models.generateContent(params);
@@ -109,10 +111,12 @@ async function generateContentWithRetry(
         lastError = error;
         const status = error.status || error.code;
         const msg = error.message || '';
-        const isRateLimit = status === 429 || msg.includes('429') || msg.includes('quota');
+        const isRateLimit = status === 429 || msg.includes('429') || msg.includes('quota') || msg.includes('RESOURCE_EXHAUSTED');
 
         if (isRateLimit) {
-           const waitTime = 5000 * Math.pow(2, i);
+           // 지수 백오프 적용 (점진적으로 더 길게 대기)
+           const waitTime = (8000 * Math.pow(2, i)) + (Math.random() * 2000);
+           console.warn(`Rate limit hit (429). Retrying in ${Math.round(waitTime/1000)}s...`);
            await delay(waitTime);
            continue;
         }
@@ -125,9 +129,59 @@ async function generateContentWithRetry(
   return useQueue ? requestQueue.add(apiCall) : apiCall();
 }
 
-export const getAIAnalysis = async (assets: Asset[], exchangeRate: number): Promise<AnalysisResponse> => {
+/**
+ * 사용자의 답변을 바탕으로 투자 목표 및 세부 지침 프롬프트를 생성합니다.
+ */
+export const generateGoalPrompt = async (answers: {
+  age: string,
+  risk: string,
+  purpose: string,
+  horizon: string,
+  preference: string
+}): Promise<{ goal: string, prompt: string }> => {
+  const prompt = `
+    다음은 사용자의 투자 성향 및 목표에 관한 답변입니다:
+    - 연령대: ${answers.age}
+    - 위험 선호도: ${answers.risk}
+    - 투자 목적: ${answers.purpose}
+    - 투자 기간: ${answers.horizon}
+    - 선호 자산/특이사항: ${answers.preference}
+
+    위 정보를 바탕으로 이 사용자를 위한 **전문적인 자산관리 지침 프롬프트**를 생성하세요.
+    결과는 반드시 다음 JSON 형식을 따르세요:
+    {
+      "goal": "한 줄 요약 목표 (예: '은퇴 대비 10억 자산 증식')",
+      "prompt": "수석 PB가 사용할 상세 지침. (~을 우선 고려하고, ~한 비중을 유지하며, ~계좌는 어떻게 운용하라는 식의 3~4문장)"
+    }
+  `;
+
+  try {
+    const response = await generateContentWithRetry({
+      model: 'gemini-3-flash-preview',
+      contents: prompt,
+      config: { responseMimeType: "application/json" }
+    });
+    const parsed = safeJsonParse(response.text);
+    return {
+      goal: parsed?.goal || "맞춤형 자산 관리",
+      prompt: parsed?.prompt || "성장과 안정을 동시에 고려한 분산 투자를 권장합니다."
+    };
+  } catch (error) {
+    console.error(error);
+    return { goal: "개별 목표 설정 필요", prompt: "사용자 정보가 부족하여 기본 전략을 적용합니다." };
+  }
+};
+
+export const getAIAnalysis = async (
+  assets: Asset[], 
+  accounts: Account[], 
+  exchangeRate: number,
+  userProfile: UserProfile | null
+): Promise<AnalysisResponse> => {
   let totalValueKRW = 0;
   let cashValueKRW = 0;
+
+  const accountMap = new Map(accounts.map(a => [a.id, a]));
 
   const assetSummary = assets.length > 0 
     ? assets.map(a => {
@@ -139,13 +193,20 @@ export const getAIAnalysis = async (assets: Asset[], exchangeRate: number): Prom
         totalValueKRW += valKRW;
         if (a.type === AssetType.CASH) cashValueKRW += valKRW;
 
-        return `- [${a.institution} | ${a.type}] ${a.name}(${a.ticker || 'N/A'}): ${qty}주, 평가액 ${Math.floor(valKRW).toLocaleString()}원, 계좌ID: ${a.accountId || '미지정'}`;
+        const acc = a.accountId ? accountMap.get(a.accountId) : null;
+        const accType = acc ? acc.type : '종합(위탁)';
+
+        return `- [${a.institution} | ${accType} | ${a.type}] ${a.name}(${a.ticker || 'N/A'}): ${qty}주, 평가액 ${Math.floor(valKRW).toLocaleString()}원`;
       }).join('\n')
     : "자산 없음";
 
+  const goalInstruction = userProfile?.goalPrompt 
+    ? `사용자의 맞춤 지침: ${userProfile.goalPrompt}`
+    : "사용자의 목표: 2029년까지 자산 증식(Growth), 2030년부터 인컴 전환(Income).";
+
   const prompt = `
-    당신은 대한민국 금융 규정에 정통한 **수석 자산관리 전문가(PB)**입니다.
-    사용자의 목표: **2029년까지 자산 증식(Growth)**, **2030년부터 인컴 전환(Income)**.
+    당신은 대한민국 금융 규정과 세법에 정통한 **수석 자산관리 전문가(PB)**입니다.
+    ${goalInstruction}
 
     [현재 포트폴리오 데이터]
     - 총 자산: 약 ${Math.floor(totalValueKRW).toLocaleString()} KRW
@@ -153,27 +214,26 @@ export const getAIAnalysis = async (assets: Asset[], exchangeRate: number): Prom
     - 상세 보유 내역:
     ${assetSummary}
 
-    [분석 및 제안 핵심 규칙]
-    1. **자산 유형별 특성 고려**: 
-       - **주식**: 성장성 중심, 높은 변동성 용인.
-       - **채권**: 안정적인 이자 수익, 포트폴리오 방어.
-       - **현금**: 유동성 확보 및 저가 매수 기회 대기.
-    2. **대한민국 연금 규정 엄수 (매우 중요)**:
-       - 자산 타입이 '연금'(Pension)인 경우, **대한민국 IRP/DC형 퇴직연금 운용 규정**을 기준으로 액션 플랜을 짜야 합니다.
-       - **위험자산 한도 70% 룰**: 주식형 자산 비중이 계좌 내 70%를 넘지 않도록 조정하십시오.
-       - **상품 제한**: 개별 주식 직접 투자 불가(ETF만 가능), 레버리지/인버스 ETF 매수 금지, 파생상품 위험평가액 40% 초과 금지.
-       - 위반 소지가 있는 상품 추천 시 **"연금 계좌 매수 불가 상품"**으로 간주하고 안전한 대안(TDF, 채권형 ETF, 예금 등)을 제시하십시오.
-    3. **계좌별/기관별 실행 계획 그룹화**:
-       - 매매 제안은 반드시 **기관(Institution) 및 계좌(Account)** 단위로 묶어서 제시해야 합니다. 
+    [계좌 유형별 필수 운용 규정 및 전략 - 엄격히 준수]
+    1. **퇴직연금(IRP) 및 확정기여형(DC)**:
+       - **위험자산 70% 제한 규정**: 주식형 ETF, 주식형 펀드, 리츠 등 '위험자산'으로 분류되는 항목은 해당 계좌 내 총 자산의 70%를 초과할 수 없습니다.
+       - 만약 특정 IRP/DC 계좌에서 위험자산 비중이 70%를 초과했다면, 즉시 이를 매도하고 안전자산(채권형, TDF 등)으로 교체하는 '강제 리밸런싱'을 제안하십시오.
+       - 개별 주식 매수 불가.
+    2. **개인연금(연금저축)**:
+       - 개별 주식 매수 불가 (펀드 및 ETF만 가능). 위험자산 한도는 없으나 장기 안정성을 고려하십시오.
+    3. **ISA(중개형)**:
+       - 비과세 혜택 극대화. 배당주, 리츠, 고배당 ETF 위주 배치를 권장합니다.
+    4. **종합(위탁) 계좌**:
+       - 제한 없음. 공격적 성장주나 해외 직접 투자에 활용하십시오.
 
     [출력 요구사항]
-    - 'bestStrategy.executionGroups' 배열에 기관/계좌별로 그룹화된 실행 계획을 담아주세요.
+    - 각 계좌별로 위험자산 한도 준수 여부를 먼저 체크하고 진단하십시오.
     - 한국어로 작성하고 JSON 형식을 엄격히 준수하십시오.
   `;
 
   try {
     const response = await generateContentWithRetry({
-      model: 'gemini-3-flash-preview',
+      model: 'gemini-3-pro-preview', 
       contents: prompt,
       config: { 
         tools: [{ googleSearch: {} }],
@@ -181,7 +241,7 @@ export const getAIAnalysis = async (assets: Asset[], exchangeRate: number): Prom
         responseSchema: {
           type: Type.OBJECT,
           properties: {
-            currentDiagnosis: { type: Type.STRING, description: "자산 유형별 특성과 비중을 분석한 진단 리포트 (마크다운)" },
+            currentDiagnosis: { type: Type.STRING, description: "계좌 규정(특히 70% 규정) 준수 여부 및 자산 배분 상세 진단 (마크다운)" },
             marketConditions: { type: Type.STRING },
             bestStrategy: {
               type: Type.OBJECT,
@@ -251,7 +311,7 @@ export const getAIAnalysis = async (assets: Asset[], exchangeRate: number): Prom
 };
 
 export const searchStockList = async (query: string): Promise<StockInfo[]> => {
-  const prompt = `"${query}" 관련 투자 자산 5개의 실시간 정보를 JSON으로 반환하세요.`;
+  const prompt = `"${query}" 관련 투자 자산 5개의 실시간 정보를 JSON으로 반환하세요. 분류는 주식, 펀드, ETF, 금, 현금 중 하나여야 합니다.`;
   try {
     const response = await generateContentWithRetry({
       model: 'gemini-3-flash-preview',
@@ -268,7 +328,7 @@ export const searchStockList = async (query: string): Promise<StockInfo[]> => {
               ticker: { type: Type.STRING },
               price: { type: Type.NUMBER },
               currency: { type: Type.STRING, enum: ["KRW", "USD"] },
-              type: { type: Type.STRING, enum: ["주식", "채권", "연금", "현금"] }
+              type: { type: Type.STRING, enum: ["주식", "펀드", "ETF", "금", "현금"] }
             }
           }
         }
@@ -280,8 +340,7 @@ export const searchStockList = async (query: string): Promise<StockInfo[]> => {
 
 export const updateAssetPrices = async (assets: Asset[]): Promise<PriceUpdateResult> => {
   if (assets.length === 0) {
-     // 자산이 없어도 환율 정보는 필요할 수 있으므로 구글 검색으로 환율만이라도 가져오도록 유도
-     const fallbackPrompt = "현재 USD/KRW 실시간 환율 정보를 JSON으로 반환하세요. { \"exchangeRate\": 1350.0 }";
+     const fallbackPrompt = "현재 USD/KRW 실시간 환율 정보를 JSON으로 반환하세요.";
      try {
        const resp = await generateContentWithRetry({
          model: 'gemini-3-flash-preview',
@@ -303,7 +362,7 @@ export const updateAssetPrices = async (assets: Asset[]): Promise<PriceUpdateRes
   const targets = assets.filter(a => a.type !== AssetType.CASH);
   try {
     const assetInfo = targets.map(a => ({ id: a.id, name: a.name, ticker: a.ticker, currency: a.currency }));
-    const prompt = `다음 자산들의 현재 시장 가격과 현재 실시간 USD/KRW 환율을 구글 검색을 통해 정확히 조사하여 JSON으로 반환하세요: ${JSON.stringify(assetInfo)}`;
+    const prompt = `다음 자산들의 현재 실시간 시장 가격(주식/ETF/금 시세)과 최신 USD/KRW 환율을 조사하여 JSON으로 반환하세요: ${JSON.stringify(assetInfo)}. 펀드(FUND)의 경우 가장 최근의 기준가를 조사하세요.`;
     const response = await generateContentWithRetry({
       model: 'gemini-3-flash-preview',
       contents: prompt,
@@ -320,7 +379,7 @@ export const updateAssetPrices = async (assets: Asset[]): Promise<PriceUpdateRes
                 properties: { id: { type: Type.STRING }, price: { type: Type.NUMBER } }
               }
             },
-            exchangeRate: { type: Type.NUMBER, description: "최신 USD/KRW 환율 (예: 1385.5)" }
+            exchangeRate: { type: Type.NUMBER, description: "현재 실시간 USD/KRW 환율" }
           },
           required: ["prices", "exchangeRate"]
         }
@@ -333,16 +392,16 @@ export const updateAssetPrices = async (assets: Asset[]): Promise<PriceUpdateRes
     });
     return { updatedAssets, exchangeRate: parsed?.exchangeRate };
   } catch (error) { 
-    console.error("Price Update Error:", error);
+    console.error("Price fetch error:", error);
     return { updatedAssets: assets }; 
   }
 };
 
 export const getStockDeepDive = async (query: string): Promise<{ text: string, sources: { title: string; uri: string }[] }> => {
-  const prompt = `"${query}" 종목의 최신 심층 분석 리포트 (마크다운).`;
+  const prompt = `"${query}" 종목의 최신 심층 분석 리포트 (마크다운). IRP/DC 계좌에서의 편입 가능 여부(위험자산 해당 여부)를 포함하여 분석하십시오.`;
   try {
     const response = await generateContentWithRetry({
-      model: 'gemini-3-flash-preview',
+      model: 'gemini-3-pro-preview',
       contents: prompt,
       config: { tools: [{ googleSearch: {} }] }
     });
@@ -377,7 +436,7 @@ export const getAssetHistory = async (ticker: string, name: string): Promise<His
 };
 
 export const classifyTransactionTypes = async (transactions: {id: string, name: string, institution: string}[]): Promise<any[]> => {
-  const prompt = `자산 분류 JSON: ${JSON.stringify(transactions)}`;
+  const prompt = `다음 거래 내역을 주식, 펀드, ETF, 금, 현금 중 하나로 분류하여 JSON 반환: ${JSON.stringify(transactions)}`;
   try {
     const response = await generateContentWithRetry({
       model: 'gemini-3-flash-preview',

@@ -3,7 +3,6 @@ import React, { useState, useMemo } from 'react';
 import { Asset, AssetType } from '../types';
 import { Filter, Trash2, Edit3, Plus, PiggyBank, CreditCard, RefreshCw, History, AlertCircle } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import { AssetSparkline } from './AssetSparkline';
 
 interface AssetListProps {
   assets: Asset[];
@@ -75,7 +74,6 @@ const AssetList: React.FC<AssetListProps> = ({ assets, onAddAsset, onDeleteAsset
           const mult = asset.currency === 'USD' ? (exchangeRate || 1350) : 1;
           const totalValKRW = (asset.currentPrice || 0) * (asset.quantity || 0) * mult;
           
-          // purchasePriceKRW가 없을 경우를 대비한 방어적 계산
           const defaultPriceKRW = asset.purchasePrice * (asset.currency === 'USD' ? (exchangeRate || 1350) : 1);
           const costBasisKRW = (asset.quantity || 0) * (asset.purchasePriceKRW || defaultPriceKRW);
           
@@ -107,11 +105,7 @@ const AssetList: React.FC<AssetListProps> = ({ assets, onAddAsset, onDeleteAsset
                 </div>
               </div>
               
-              <div className="h-12 w-full mb-4">
-                 <AssetSparkline ticker={asset.ticker} name={asset.name} isPlus={isPlus} refreshTick={refreshTick} />
-              </div>
-              
-              <div className="flex justify-between items-end">
+              <div className="flex justify-between items-end mt-2 pt-2 border-t border-slate-50">
                 <div>
                   <p className="text-[10px] font-bold text-slate-400 mb-0.5">평가금액 ({(asset.quantity || 0).toLocaleString()}주)</p>
                   <p className="text-lg font-black text-slate-900">{Math.floor(totalValKRW).toLocaleString()}원</p>

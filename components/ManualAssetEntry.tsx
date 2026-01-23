@@ -1,7 +1,7 @@
 
 import React, { useState } from 'react';
 import { X, Save, CreditCard, Sparkles, Loader2, Search, CheckCircle2, Building2 } from 'lucide-react';
-import { Asset, AssetType, Account } from '../types';
+import { Asset, AssetType, Account, AccountType } from '../types';
 import { searchStockList, StockInfo } from '../services/geminiService';
 
 interface ManualAssetEntryProps {
@@ -28,6 +28,8 @@ const ManualAssetEntry: React.FC<ManualAssetEntryProps> = ({ onClose, onSave, as
   const [isSearching, setIsSearching] = useState(false);
   const [searchTerm, setSearchTerm] = useState(asset?.name || '');
   const [searchResults, setSearchResults] = useState<StockInfo[]>([]);
+
+  const selectedAccount = accounts.find(a => a.id === formData.accountId);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
@@ -81,7 +83,6 @@ const ManualAssetEntry: React.FC<ManualAssetEntryProps> = ({ onClose, onSave, as
       name: info.name,
       ticker: info.ticker,
       currentPrice: info.price,
-      // Default purchase price to current price if adding new, or keep existing
       purchasePrice: prev.purchasePrice || info.price, 
       currency: info.currency as 'KRW' | 'USD',
       type: info.type as AssetType
@@ -123,6 +124,14 @@ const ManualAssetEntry: React.FC<ManualAssetEntryProps> = ({ onClose, onSave, as
                 {accounts.map(acc => <option key={acc.id} value={acc.id}>{acc.nickname} ({acc.institution})</option>)}
               </select>
             </div>
+            {selectedAccount && (
+              <div className={`mt-1 text-[10px] font-bold px-3 py-2 rounded-lg border flex items-center gap-2
+                ${selectedAccount.type === AccountType.IRP || selectedAccount.type === AccountType.DC ? 'bg-emerald-50 text-emerald-700 border-emerald-100' : 
+                  selectedAccount.type === AccountType.ISA ? 'bg-blue-50 text-blue-700 border-blue-100' : 'bg-slate-50 text-slate-500 border-slate-100'}`}>
+                <CheckCircle2 size={12} />
+                <span>선택된 계좌 유형: <strong>{selectedAccount.type}</strong></span>
+              </div>
+            )}
           </div>
           
           <div className="space-y-1.5">
@@ -190,7 +199,9 @@ const ManualAssetEntry: React.FC<ManualAssetEntryProps> = ({ onClose, onSave, as
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-1.5">
               <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">자산 종류</label>
-              <select name="type" value={formData.type} onChange={handleChange} className="w-full px-4 py-4 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold appearance-none cursor-pointer outline-none focus:border-indigo-500 focus:bg-white transition-all">{Object.values(AssetType).map(t => <option key={t} value={t}>{t}</option>)}</select>
+              <select name="type" value={formData.type} onChange={handleChange} className="w-full px-4 py-4 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold appearance-none cursor-pointer outline-none focus:border-indigo-500 focus:bg-white transition-all">
+                {Object.values(AssetType).map(t => <option key={t} value={t}>{t}</option>)}
+              </select>
             </div>
             <div className="space-y-1.5">
               <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">거래 통화</label>
