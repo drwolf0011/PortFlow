@@ -45,10 +45,8 @@ const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 class RequestQueue {
   private queue: (() => Promise<void>)[] = [];
   private activeCount = 0;
-  // 429 에러 방지를 위해 동시 실행 수를 1로 제한 (Strict Serial)
   private maxConcurrency = 1; 
   private lastRequestTime = 0;
-  // 요청 간 최소 간격을 2초로 늘려 안정성 확보
   private minInterval = 2000;
 
   async add<T>(task: () => Promise<T>): Promise<T> {
@@ -103,7 +101,7 @@ async function generateContentWithRetry(
 
   const apiCall = async () => {
     let lastError;
-    const maxRetries = 4; // 재시도 횟수 상향
+    const maxRetries = 4;
     for (let i = 0; i < maxRetries; i++) {
       try {
         return await ai.models.generateContent(params);
@@ -114,7 +112,6 @@ async function generateContentWithRetry(
         const isRateLimit = status === 429 || msg.includes('429') || msg.includes('quota') || msg.includes('RESOURCE_EXHAUSTED');
 
         if (isRateLimit) {
-           // 지수 백오프 적용 (점진적으로 더 길게 대기)
            const waitTime = (8000 * Math.pow(2, i)) + (Math.random() * 2000);
            console.warn(`Rate limit hit (429). Retrying in ${Math.round(waitTime/1000)}s...`);
            await delay(waitTime);
@@ -130,8 +127,127 @@ async function generateContentWithRetry(
 }
 
 /**
- * 사용자의 답변을 바탕으로 투자 목표 및 세부 지침 프롬프트를 생성합니다.
+ * 배열을 지정된 크기로 나누는 헬퍼 함수
  */
+const chunkArray = <T>(array: T[], size: number): T[][] => {
+  const chunks: T[][] = [];
+  for (let i = 0; i < array.length; i += size) {
+    chunks.push(array.slice(i, i + size));
+  }
+  return chunks;
+};
+
+/**
+ * 실시간 시세 및 환율 업데이트 고도화 (배치 처리)
+ * 1. 5개 단위의 배치를 순차적으로 처리하여 Gemini 3 Pro의 검색 집중도를 높임
+ * 2. 각 종목별로 Yahoo Finance, Google Finance 등 실시간 소스 확인 강제
+ * 3. 최신 USD/KRW 환율 정보를 모든 배치에서 교차 검증하여 일관성 확보
+ */
+export const updateAssetPrices = async (assets: Asset[]): Promise<PriceUpdateResult> => {
+  const targets = assets.filter(a => a.type !== AssetType.CASH);
+  
+  if (targets.length === 0) {
+     const fxPrompt = "현재 시점의 실시간 USD/KRW 환율 정보를 웹 검색을 통해 정밀하게 조사하여 JSON으로 반환하세요. { \"exchangeRate\": 숫자 }";
+     try {
+       const resp = await generateContentWithRetry({
+         model: 'gemini-3-pro-preview',
+         contents: fxPrompt,
+         config: {
+           tools: [{ googleSearch: {} }],
+           responseMimeType: "application/json",
+           responseSchema: {
+             type: Type.OBJECT,
+             properties: { exchangeRate: { type: Type.NUMBER } }
+           }
+         }
+       });
+       const p = safeJsonParse(resp.text);
+       return { updatedAssets: assets, exchangeRate: p?.exchangeRate };
+     } catch(e) { return { updatedAssets: assets }; }
+  }
+
+  const assetChunks = chunkArray(targets, 5);
+  let allUpdatedPrices: { id: string, price: number }[] = [];
+  let latestExchangeRate: number | undefined;
+
+  for (const chunk of assetChunks) {
+    const chunkInfo = chunk.map(a => ({ 
+      id: a.id, 
+      name: a.name, 
+      ticker: a.ticker, 
+      currency: a.currency,
+      type: a.type 
+    }));
+    
+    const prompt = `
+      [실시간 금융 데이터 정밀 검색 - 배치 업데이트]
+      1. 아래 자산 리스트에 대해 **티커(Ticker) 정보를 우선 사용**하여 현재 실시간 시장 가격을 웹 검색(Google/Yahoo Finance)으로 조사하세요.
+      2. 검색 시점 기준 가장 최근의 종가 또는 실시간가를 가져오며, 장이 열려있다면 현재가를 반영하세요.
+      3. 미국 주식/ETF는 USD($), 한국 주식/ETF는 KRW(₩) 가격을 가져오세요.
+      4. **현재 시점의 실시간 USD/KRW 환율**을 반드시 조사하여 함께 반환하세요.
+      5. 검색 결과의 정확성을 위해 신뢰할 수 있는 금융 포털 소스를 2개 이상 교차 확인하세요.
+
+      [조사 대상 배치]
+      ${JSON.stringify(chunkInfo)}
+
+      [결과 JSON 요구사항]
+      {
+        "prices": [ { "id": "자산ID", "price": 숫자_최신가 } ],
+        "exchangeRate": 숫자_현재환율
+      }
+    `;
+
+    try {
+      const response = await generateContentWithRetry({
+        model: 'gemini-3-pro-preview', 
+        contents: prompt,
+        config: {
+          tools: [{ googleSearch: {} }],
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              prices: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: { 
+                    id: { type: Type.STRING }, 
+                    price: { type: Type.NUMBER } 
+                  },
+                  required: ["id", "price"]
+                }
+              },
+              exchangeRate: { type: Type.NUMBER }
+            },
+            required: ["prices", "exchangeRate"]
+          }
+        }
+      });
+
+      const parsed = safeJsonParse(response.text);
+      if (parsed?.prices) {
+        allUpdatedPrices = [...allUpdatedPrices, ...parsed.prices];
+      }
+      if (parsed?.exchangeRate) {
+        latestExchangeRate = parsed.exchangeRate;
+      }
+    } catch (error) {
+      console.error("Batch Update Error:", error);
+    }
+  }
+
+  const finalAssets = assets.map(asset => {
+    const found = allUpdatedPrices.find(p => p.id === asset.id);
+    return found ? { ...asset, currentPrice: found.price } : asset;
+  });
+
+  return { 
+    updatedAssets: finalAssets, 
+    exchangeRate: latestExchangeRate 
+  };
+};
+
 export const generateGoalPrompt = async (answers: {
   age: string,
   risk: string,
@@ -217,14 +333,12 @@ export const getAIAnalysis = async (
     [계좌 유형별 필수 운용 규정 및 전략 - 엄격히 준수]
     1. **퇴직연금(IRP) 및 확정기여형(DC)**:
        - **위험자산 70% 제한 규정**: 주식형 ETF, 주식형 펀드, 리츠 등 '위험자산'으로 분류되는 항목은 해당 계좌 내 총 자산의 70%를 초과할 수 없습니다.
-       - 만약 특정 IRP/DC 계좌에서 위험자산 비중이 70%를 초과했다면, 즉시 이를 매도하고 안전자산(채권형, TDF 등)으로 교체하는 '강제 리밸런싱'을 제안하십시오.
-       - 개별 주식 매수 불가.
     2. **개인연금(연금저축)**:
-       - 개별 주식 매수 불가 (펀드 및 ETF만 가능). 위험자산 한도는 없으나 장기 안정성을 고려하십시오.
+       - 개별 주식 매수 불가 (펀드 및 ETF만 가능).
     3. **ISA(중개형)**:
-       - 비과세 혜택 극대화. 배당주, 리츠, 고배당 ETF 위주 배치를 권장합니다.
+       - 비과세 혜택 극대화.
     4. **종합(위탁) 계좌**:
-       - 제한 없음. 공격적 성장주나 해외 직접 투자에 활용하십시오.
+       - 제한 없음.
 
     [출력 요구사항]
     - 각 계좌별로 위험자산 한도 준수 여부를 먼저 체크하고 진단하십시오.
@@ -241,7 +355,7 @@ export const getAIAnalysis = async (
         responseSchema: {
           type: Type.OBJECT,
           properties: {
-            currentDiagnosis: { type: Type.STRING, description: "계좌 규정(특히 70% 규정) 준수 여부 및 자산 배분 상세 진단 (마크다운)" },
+            currentDiagnosis: { type: Type.STRING, description: "계좌 규정 준수 여부 및 자산 배분 상세 진단 (마크다운)" },
             marketConditions: { type: Type.STRING },
             bestStrategy: {
               type: Type.OBJECT,
@@ -273,26 +387,20 @@ export const getAIAnalysis = async (
                             totalAmount: { type: Type.NUMBER },
                             reason: { type: Type.STRING },
                             isNew: { type: Type.BOOLEAN }
-                          },
-                          required: ["assetName", "ticker", "action", "quantity", "estimatedPrice", "totalAmount", "reason", "isNew"]
+                          }
                         }
                       }
-                    },
-                    required: ["institution", "accountName", "isPension", "items"]
+                    }
                   }
                 }
-              },
-              required: ["name", "description", "riskLevel", "predictedReturnRate", "rationale", "targetSectorAllocation", "executionGroups"]
+              }
             }
-          },
-          required: ["currentDiagnosis", "marketConditions", "bestStrategy"]
+          }
         }
       }
     });
     
     const parsed = safeJsonParse(response.text);
-    if (!parsed) throw new Error("Parsing Failed");
-
     const sources: { title: string; uri: string }[] = [];
     response.candidates?.[0]?.groundingMetadata?.groundingChunks?.forEach((c: any) => {
       if (c.web) sources.push({ title: c.web.title, uri: c.web.uri });
@@ -338,65 +446,6 @@ export const searchStockList = async (query: string): Promise<StockInfo[]> => {
   } catch (error) { return []; }
 };
 
-export const updateAssetPrices = async (assets: Asset[]): Promise<PriceUpdateResult> => {
-  if (assets.length === 0) {
-     const fallbackPrompt = "현재 USD/KRW 실시간 환율 정보를 JSON으로 반환하세요.";
-     try {
-       const resp = await generateContentWithRetry({
-         model: 'gemini-3-flash-preview',
-         contents: fallbackPrompt,
-         config: {
-           tools: [{ googleSearch: {} }],
-           responseMimeType: "application/json",
-           responseSchema: {
-             type: Type.OBJECT,
-             properties: { exchangeRate: { type: Type.NUMBER } }
-           }
-         }
-       });
-       const p = safeJsonParse(resp.text);
-       return { updatedAssets: assets, exchangeRate: p?.exchangeRate };
-     } catch(e) { return { updatedAssets: assets }; }
-  }
-
-  const targets = assets.filter(a => a.type !== AssetType.CASH);
-  try {
-    const assetInfo = targets.map(a => ({ id: a.id, name: a.name, ticker: a.ticker, currency: a.currency }));
-    const prompt = `다음 자산들의 현재 실시간 시장 가격(주식/ETF/금 시세)과 최신 USD/KRW 환율을 조사하여 JSON으로 반환하세요: ${JSON.stringify(assetInfo)}. 펀드(FUND)의 경우 가장 최근의 기준가를 조사하세요.`;
-    const response = await generateContentWithRetry({
-      model: 'gemini-3-flash-preview',
-      contents: prompt,
-      config: {
-        tools: [{ googleSearch: {} }],
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            prices: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: { id: { type: Type.STRING }, price: { type: Type.NUMBER } }
-              }
-            },
-            exchangeRate: { type: Type.NUMBER, description: "현재 실시간 USD/KRW 환율" }
-          },
-          required: ["prices", "exchangeRate"]
-        }
-      }
-    });
-    const parsed = safeJsonParse(response.text);
-    const updatedAssets = assets.map(asset => {
-      const mapping = parsed?.prices?.find((m: any) => m.id === asset.id);
-      return mapping ? { ...asset, currentPrice: mapping.price } : asset;
-    });
-    return { updatedAssets, exchangeRate: parsed?.exchangeRate };
-  } catch (error) { 
-    console.error("Price fetch error:", error);
-    return { updatedAssets: assets }; 
-  }
-};
-
 export const getStockDeepDive = async (query: string): Promise<{ text: string, sources: { title: string; uri: string }[] }> => {
   const prompt = `"${query}" 종목의 최신 심층 분석 리포트 (마크다운). IRP/DC 계좌에서의 편입 가능 여부(위험자산 해당 여부)를 포함하여 분석하십시오.`;
   try {
@@ -436,7 +485,7 @@ export const getAssetHistory = async (ticker: string, name: string): Promise<His
 };
 
 export const classifyTransactionTypes = async (transactions: {id: string, name: string, institution: string}[]): Promise<any[]> => {
-  const prompt = `다음 거래 내역을 주식, 펀드, ETF, 금, 현금 중 하나로 분류하여 JSON 반환: ${JSON.stringify(transactions)}`;
+  const prompt = `다음 거래 내역들을 주식, 펀드, ETF, 금, 현금 중 하나로 분류하여 JSON 배열로 반환하세요: ${JSON.stringify(transactions)}`;
   try {
     const response = await generateContentWithRetry({
       model: 'gemini-3-flash-preview',

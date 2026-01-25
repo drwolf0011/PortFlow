@@ -1,7 +1,7 @@
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { Transaction, TransactionType, Account } from '../types';
-import { Search, Filter, History, TrendingUp, TrendingDown, Inbox, CreditCard, Trash2, AlertCircle, Edit3, MoreVertical, Sparkles, Loader2 } from 'lucide-react';
+import { Search, Filter, History, TrendingUp, TrendingDown, Inbox, CreditCard, Trash2, AlertCircle, Edit3, MoreVertical, Sparkles, Loader2, X } from 'lucide-react';
 import { classifyTransactionTypes } from '../services/geminiService';
 
 interface TransactionHistoryProps {
@@ -15,17 +15,41 @@ interface TransactionHistoryProps {
 
 const TransactionHistory: React.FC<TransactionHistoryProps> = ({ transactions, accounts, onDelete, onEdit, onUpdate, exchangeRate }) => {
   const [searchTerm, setSearchTerm] = useState('');
+  const [filterAccountId, setFilterAccountId] = useState<string | null>(null);
   const [filterType, setFilterType] = useState<'ALL' | TransactionType>('ALL');
   const [isClassifying, setIsClassifying] = useState(false);
+  const [activeHintLabel, setActiveHintLabel] = useState<string | null>(null);
+
+  // 페이지 진입 시 자산 목록으로부터 전달된 필터 힌트(이름 + 계좌ID)가 있는지 확인
+  useEffect(() => {
+    const nameHint = sessionStorage.getItem('tx_filter_name');
+    const accountHint = sessionStorage.getItem('tx_filter_account_id');
+    
+    if (nameHint) {
+      setSearchTerm(nameHint);
+      const acc = accounts.find(a => a.id === accountHint);
+      setFilterAccountId(accountHint || null);
+      
+      // 안내 문구 생성
+      const hintLabel = acc ? `[${acc.nickname}] ${nameHint}` : nameHint;
+      setActiveHintLabel(hintLabel);
+      
+      // 일회성 필터링이므로 사용 후 즉시 제거
+      sessionStorage.removeItem('tx_filter_name');
+      sessionStorage.removeItem('tx_filter_account_id');
+    }
+  }, [accounts]);
 
   const filteredTransactions = useMemo(() => {
     return transactions.filter(tx => {
       const matchSearch = tx.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
                           tx.institution.toLowerCase().includes(searchTerm.toLowerCase());
       const matchType = filterType === 'ALL' || tx.type === filterType;
-      return matchSearch && matchType;
+      const matchAccount = !filterAccountId || tx.accountId === filterAccountId;
+      
+      return matchSearch && matchType && matchAccount;
     });
-  }, [transactions, searchTerm, filterType]);
+  }, [transactions, searchTerm, filterType, filterAccountId]);
 
   const formatCurrency = (val: number, currency: string) => {
     if (currency === 'USD') return `$${val.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -51,21 +75,24 @@ const TransactionHistory: React.FC<TransactionHistoryProps> = ({ transactions, a
     onEdit(tx);
   };
 
+  const handleClearFilter = () => {
+    setSearchTerm('');
+    setFilterAccountId(null);
+    setActiveHintLabel(null);
+  };
+
   const handleAutoClassify = async () => {
     if (filteredTransactions.length === 0) return;
     setIsClassifying(true);
     
-    // Only classify filtered transactions to give user control
     const targets = filteredTransactions.map(t => ({ id: t.id, name: t.name, institution: t.institution }));
     
     try {
       const results = await classifyTransactionTypes(targets);
       
       if (results.length > 0) {
-        // Create a map for O(1) lookup
         const classificationMap = new Map(results.map(r => [r.id, r.type]));
         
-        // Update all transactions, but only change type if we have a new result
         const updatedTransactions = transactions.map(t => {
           const newType = classificationMap.get(t.id);
           return newType ? { ...t, assetType: newType } : t;
@@ -101,15 +128,36 @@ const TransactionHistory: React.FC<TransactionHistoryProps> = ({ transactions, a
         
         <div className="flex flex-col gap-2">
           <div className="relative">
-            <Search size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+            <Search size={16} className={`absolute left-4 top-1/2 -translate-y-1/2 transition-colors ${searchTerm ? 'text-indigo-600' : 'text-slate-400'}`} />
             <input 
               type="text" 
               placeholder="종목 또는 기관 검색" 
               value={searchTerm} 
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="pl-11 pr-4 py-3 bg-white border border-slate-200 rounded-2xl text-sm font-medium w-full outline-none focus:ring-2 focus:ring-indigo-500/20 transition-all shadow-sm"
+              onChange={(e) => {
+                setSearchTerm(e.target.value);
+                if (activeHintLabel) handleClearFilter();
+              }}
+              className="pl-11 pr-12 py-3 bg-white border border-slate-200 rounded-2xl text-sm font-medium w-full outline-none focus:ring-2 focus:ring-indigo-500/20 transition-all shadow-sm"
             />
+            {searchTerm && (
+              <button 
+                onClick={handleClearFilter}
+                className="absolute right-3 top-1/2 -translate-y-1/2 p-1.5 bg-slate-100 text-slate-400 rounded-full hover:bg-slate-200 transition-colors"
+              >
+                <X size={14} />
+              </button>
+            )}
           </div>
+
+          {activeHintLabel && (
+            <div className="px-1 flex items-center gap-1.5 animate-in slide-in-from-top-1">
+              <span className="text-[10px] font-black text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-md border border-indigo-100/50 flex items-center gap-1">
+                <Sparkles size={10} /> '{activeHintLabel}' 자산 필터 적용 중
+              </span>
+              <button onClick={handleClearFilter} className="text-[9px] font-bold text-slate-400 hover:text-indigo-600 underline underline-offset-2">필터 해제</button>
+            </div>
+          )}
+
           <div className="flex gap-2">
             <button 
               onClick={() => setFilterType('ALL')}
