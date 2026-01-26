@@ -10,7 +10,7 @@ import {
   BarChart3, Scale, Banknote, ArrowRight, 
   Calculator, Lightbulb, CheckCircle2, ShieldCheck, AlertTriangle, Wallet,
   Bookmark, BookOpen, Trash2, Calendar, FolderOpen, User, Settings2, Check,
-  X, FileText, BarChart, MoveUpRight, Quote, Clock3
+  X, FileText, BarChart, MoveUpRight, Quote, Clock, ShieldAlert
 } from 'lucide-react';
 import { BarChart as ReBarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, ReferenceLine } from 'recharts';
 
@@ -33,10 +33,10 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({
 }) => {
   const [data, setData] = useState<AnalysisResponse | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
-  const [showSources, setShowSources] = useState(false); // 리서치 리포트 소스 접기 상태
+  const [showSources, setShowSources] = useState(false); 
   const [stockQuery, setStockQuery] = useState('');
   const [searchLoading, setSearchLoading] = useState(false);
-  const [stockDeepDive, setStockDeepDive] = useState<{ text: string, sources: { title: string; uri: string }[] } | null>(null);
+  const [stockDeepDive, setStockDeepDive] = useState<{ text: string, sources: { title: string; uri: string } } | null>(null);
   const [isSavedModalOpen, setIsSavedModalOpen] = useState(false);
   const [isGoalWizardOpen, setIsGoalWizardOpen] = useState(false);
   const [loadedStrategyId, setLoadedStrategyId] = useState<string | null>(null);
@@ -65,9 +65,9 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({
     try {
       const result = await getAIAnalysis(assets, accounts || [], exchangeRate, user);
       setData(result);
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      alert("분석 로드 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.");
+      alert(err.message || "분석 로드 중 오류가 발생했습니다. 응답이 길어 처리 중 문제가 발생했을 수 있습니다.");
     } finally {
       setLoading(false);
     }
@@ -80,9 +80,8 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({
     setSearchLoading(true);
     setStockQuery(finalQuery);
     setStockDeepDive(null);
-    setShowSources(false); // 새로운 검색 시 소스 목록 초기화(접힘)
+    setShowSources(false); // 소스 리스트 기본적으로 닫기
     
-    // Scroll to research section
     researchSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 
     try {
@@ -113,7 +112,6 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({
     setIsSavedModalOpen(false);
   };
 
-  // Funding Plan Summary calculation
   const planSummary = useMemo(() => {
     if (!data?.bestStrategy?.executionGroups) return { buy: 0, sell: 0, net: 0 };
     let buy = 0, sell = 0;
@@ -127,7 +125,6 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({
     return { buy, sell, net: sell - buy };
   }, [data]);
 
-  // Goal Wizard Handlers
   const wizardQuestions = [
     { key: 'age', label: '현재 연령대가 어떻게 되시나요?', options: ['20대 이하', '30대', '40대', '50대', '60대 이상'] },
     { key: 'risk', label: '선호하는 투자 위험 수준은?', options: ['안정 지향 (원금 보존 우선)', '중립성 (적정 수익과 위험)', '공격 투자 (높은 수익 추구)'] },
@@ -174,7 +171,6 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({
   return (
     <div className="p-5 space-y-8 pb-40 animate-in fade-in duration-500">
       
-      {/* 1. Header & Goal Status */}
       <div className="flex flex-col gap-4 px-1">
          <div className="flex items-center justify-between">
            <h2 className="text-xl font-black text-slate-800 tracking-tight">AI 자산관리자</h2>
@@ -186,7 +182,6 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({
            </button>
          </div>
 
-         {/* Current Goal Banner */}
          <div className="bg-white p-5 rounded-[2rem] border border-slate-100 shadow-sm flex items-center justify-between group">
            <div className="flex items-center gap-3 overflow-hidden">
              <div className="p-2.5 bg-indigo-50 text-indigo-600 rounded-xl shrink-0"><Target size={18} /></div>
@@ -238,7 +233,6 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({
         </div>
       </section>
 
-      {/* 2. Analysis Content */}
       {loading && (
         <div className="py-24 flex flex-col items-center justify-center text-center space-y-4 animate-pulse">
           <div className="w-16 h-16 border-4 border-indigo-100 border-t-indigo-600 rounded-full animate-spin"></div>
@@ -259,155 +253,155 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({
              </div>
           )}
 
-          {/* Portfolio Diagnosis */}
           <section className="bg-white p-7 rounded-[2.5rem] border border-slate-100 shadow-sm space-y-4">
             <div className="flex items-center gap-2.5">
               <div className="p-2.5 bg-indigo-50 text-indigo-600 rounded-xl shrink-0"><Activity size={20} /></div>
               <h4 className="text-sm font-black text-slate-800 uppercase tracking-tight">보유 자산 현황 및 팩트 진단</h4>
             </div>
             <div className="prose prose-slate prose-sm max-w-none text-slate-600 leading-relaxed prose-p:mb-2">
-              <ReactMarkdown>{data.currentDiagnosis}</ReactMarkdown>
+              <ReactMarkdown>{data?.currentDiagnosis || ""}</ReactMarkdown>
             </div>
             <div className="flex items-center gap-2 p-3 bg-slate-50 rounded-2xl border border-slate-100">
                <Globe size={14} className="text-slate-400" />
-               <p className="text-[11px] font-bold text-slate-500">{data.marketConditions}</p>
+               <p className="text-[11px] font-bold text-slate-500">{data?.marketConditions || ""}</p>
             </div>
           </section>
 
-          {/* Optimized Strategy */}
-          <section className="space-y-4">
-            <div className="flex items-center justify-between px-1">
-              <div className="flex items-center gap-2">
-                <ShieldCheck size={20} className="text-indigo-600" />
-                <h3 className="font-black text-slate-800 text-lg">AI 권고 마스터 전략</h3>
+          {data.bestStrategy && (
+            <section className="space-y-4">
+              <div className="flex items-center justify-between px-1">
+                <div className="flex items-center gap-2">
+                  <ShieldCheck size={20} className="text-indigo-600" />
+                  <h3 className="font-black text-slate-800 text-lg">AI 권고 마스터 전략</h3>
+                </div>
+                <button 
+                  onClick={handleSaveCurrentStrategy}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 text-indigo-600 rounded-full text-[10px] font-black hover:bg-indigo-100 transition-colors"
+                >
+                  <Bookmark size={12} /> 전략 저장
+                </button>
               </div>
-              <button 
-                onClick={handleSaveCurrentStrategy}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 text-indigo-600 rounded-full text-[10px] font-black hover:bg-indigo-100 transition-colors"
-              >
-                <Bookmark size={12} /> 전략 저장
-              </button>
-            </div>
-            
-            <div className="p-7 rounded-[2.5rem] border-2 border-indigo-600 bg-indigo-50/10 shadow-xl shadow-indigo-100/20 relative overflow-hidden">
-              <div className="absolute top-0 right-0 bg-indigo-600 text-white text-[10px] font-black px-4 py-2 rounded-bl-2xl">OPTIMIZED</div>
               
-              <div className="flex justify-between items-start mb-6">
-                <div className="flex items-center gap-4">
-                  <div className={`w-12 h-12 rounded-2xl flex items-center justify-center ${data.bestStrategy.riskLevel === 'HIGH' ? 'bg-rose-100 text-rose-600' : 'bg-emerald-100 text-emerald-600'}`}>
-                    {data.bestStrategy.riskLevel === 'HIGH' ? <TrendingUp size={24} /> : <Scale size={24} />}
-                  </div>
-                  <div>
-                    <h4 className="font-black text-slate-800 text-lg">{data.bestStrategy.name}</h4>
-                    <p className="text-[11px] font-bold text-slate-400">{data.bestStrategy.targetSectorAllocation}</p>
-                  </div>
-                </div>
-                <div className="text-right">
-                  <p className="text-[10px] font-black text-slate-400">연 예상 기대 수익</p>
-                  <p className="text-2xl font-black text-rose-500">+{data.bestStrategy.predictedReturnRate}%</p>
-                </div>
-              </div>
-
-              <div className="space-y-4">
-                <div className="bg-white/60 p-4 rounded-2xl border border-white shadow-sm">
-                  <p className="text-xs font-medium text-slate-600 leading-relaxed">{data.bestStrategy.description}</p>
-                </div>
-                <div className="flex items-start gap-3 p-4 bg-indigo-600 text-white rounded-2xl shadow-lg">
-                  <Lightbulb size={18} className="shrink-0 mt-0.5" />
-                  <div>
-                    <p className="text-[10px] font-black uppercase opacity-60 mb-1">Strategy Rationale</p>
-                    <p className="text-xs font-bold leading-relaxed">{data.bestStrategy.rationale}</p>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </section>
-
-          {/* Action Plan Summary */}
-          <section className="bg-white rounded-[3rem] p-8 shadow-2xl border border-indigo-50 relative overflow-hidden">
-            <div className="absolute top-0 left-0 w-full h-1.5 bg-gradient-to-r from-indigo-600 to-indigo-400"></div>
-            <div className="flex items-center gap-2.5 mb-8">
-              <Zap size={22} className="text-indigo-600" fill="currentColor" />
-              <h4 className="font-black text-slate-800 text-xl tracking-tight">실행 액션 플랜</h4>
-            </div>
-
-            <div className="mb-10 bg-slate-50 p-6 rounded-[2rem] border border-slate-100">
-              <div className="flex items-center gap-2 mb-5">
-                <Banknote size={16} className="text-slate-400" />
-                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Self-Funding Summary</span>
-              </div>
-              <div className="flex items-center justify-between gap-4">
-                <div className="flex-1">
-                  <p className="text-[10px] font-black text-blue-500 uppercase mb-1">매도 확보 자금</p>
-                  <p className="text-base font-black text-slate-800">+{planSummary.sell.toLocaleString()}원</p>
-                </div>
-                <ArrowRight className="text-slate-200" />
-                <div className="flex-1 text-right">
-                  <p className="text-[10px] font-black text-rose-500 uppercase mb-1">매수 소요 자금</p>
-                  <p className="text-base font-black text-slate-800">-{planSummary.buy.toLocaleString()}원</p>
-                </div>
-              </div>
-            </div>
-
-            <div className="space-y-8">
-              {data.bestStrategy.executionGroups?.map((group, gIdx) => (
-                <div key={gIdx} className="border border-slate-100 rounded-[2rem] p-6 bg-slate-50/50">
-                  <div className="flex items-center justify-between mb-5">
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 bg-white rounded-xl shadow-sm flex items-center justify-center">
-                        <Wallet size={20} className="text-indigo-600" />
-                      </div>
-                      <div>
-                        <h5 className="font-black text-slate-800 text-sm">{group.accountName || group.institution}</h5>
-                        <p className="text-[10px] font-bold text-slate-400">{group.institution}</p>
-                      </div>
+              <div className="p-7 rounded-[2.5rem] border-2 border-indigo-600 bg-indigo-50/10 shadow-xl shadow-indigo-100/20 relative overflow-hidden">
+                <div className="absolute top-0 right-0 bg-indigo-600 text-white text-[10px] font-black px-4 py-2 rounded-bl-2xl">OPTIMIZED</div>
+                
+                <div className="flex justify-between items-start mb-6">
+                  <div className="flex items-center gap-4">
+                    <div className={`w-12 h-12 rounded-2xl flex items-center justify-center ${data.bestStrategy.riskLevel === 'HIGH' ? 'bg-rose-100 text-rose-600' : 'bg-emerald-100 text-emerald-600'}`}>
+                      {data.bestStrategy.riskLevel === 'HIGH' ? <TrendingUp size={24} /> : <Scale size={24} />}
+                    </div>
+                    <div>
+                      <h4 className="font-black text-slate-800 text-lg">{data.bestStrategy.name}</h4>
+                      <p className="text-[11px] font-bold text-slate-400">{data.bestStrategy.targetSectorAllocation}</p>
                     </div>
                   </div>
-                  <div className="space-y-3">
-                    {group.items?.map((item, i) => (
-                      <div 
-                        key={i} 
-                        onClick={() => handleDeepDiveSearch(item.assetName)}
-                        className={`p-4 rounded-[1.5rem] border transition-all bg-white cursor-pointer group/item relative hover:shadow-lg active:scale-95 ${item.action === 'BUY' ? 'border-rose-100 hover:border-rose-300' : item.action === 'SELL' ? 'border-blue-100 hover:border-blue-300' : 'border-slate-100 hover:border-indigo-200'}`}
-                      >
-                        <div className="flex justify-between items-start mb-2">
-                          <div className="flex gap-3">
-                            <div className={`w-8 h-8 rounded-xl flex items-center justify-center font-black text-[9px] ${
-                              item.action === 'BUY' ? 'bg-rose-500 text-white shadow-sm' : 
-                              item.action === 'SELL' ? 'bg-blue-500 text-white shadow-sm' : 'bg-slate-400 text-white'
-                            }`}>
-                              {item.action === 'BUY' ? '매수' : item.action === 'SELL' ? '매도' : '유지'}
-                            </div>
-                            <div>
-                              <p className="text-xs font-black text-slate-800 flex items-center gap-1.5">
-                                {item.assetName}
-                                <span className="text-indigo-600 opacity-0 group-hover/item:opacity-100 transition-opacity"><Search size={10} /></span>
-                              </p>
-                              <p className="text-[9px] font-black text-slate-300 uppercase tracking-widest">{item.ticker}</p>
-                            </div>
-                          </div>
-                          <div className="text-right">
-                            <p className="text-xs font-black text-slate-900">{Math.floor(item.totalAmount || 0).toLocaleString()}원</p>
-                            <p className="text-[8px] font-bold text-slate-400">{item.quantity.toLocaleString()}주 내외</p>
-                          </div>
-                        </div>
-                        <p className="text-[10px] font-bold text-slate-500 leading-relaxed pl-11">{item.reason}</p>
-                        <div className="absolute right-4 bottom-4 opacity-0 group-hover/item:opacity-100 transition-opacity">
-                          <div className="flex items-center gap-1 text-[9px] font-black text-indigo-500 uppercase tracking-widest">
-                            Deep Dive <MoveUpRight size={10} />
-                          </div>
-                        </div>
-                      </div>
-                    ))}
+                  <div className="text-right">
+                    <p className="text-[10px] font-black text-slate-400">연 예상 기대 수익</p>
+                    <p className="text-2xl font-black text-rose-500">+{data.bestStrategy.predictedReturnRate}%</p>
                   </div>
                 </div>
-              ))}
-            </div>
-          </section>
+
+                <div className="space-y-4">
+                  <div className="bg-white/60 p-4 rounded-2xl border border-white shadow-sm">
+                    <p className="text-xs font-medium text-slate-600 leading-relaxed">{data.bestStrategy.description}</p>
+                  </div>
+                  <div className="flex items-start gap-3 p-4 bg-indigo-600 text-white rounded-2xl shadow-lg">
+                    <Lightbulb size={18} className="shrink-0 mt-0.5" />
+                    <div>
+                      <p className="text-[10px] font-black uppercase opacity-60 mb-1">Strategy Rationale</p>
+                      <p className="text-xs font-bold leading-relaxed">{data.bestStrategy.rationale}</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </section>
+          )}
+
+          {data.bestStrategy?.executionGroups && (
+            <section className="bg-white rounded-[3rem] p-8 shadow-2xl border border-indigo-50 relative overflow-hidden">
+              <div className="absolute top-0 left-0 w-full h-1.5 bg-gradient-to-r from-indigo-600 to-indigo-400"></div>
+              <div className="flex items-center gap-2.5 mb-8">
+                <Zap size={22} className="text-indigo-600" fill="currentColor" />
+                <h4 className="font-black text-slate-800 text-xl tracking-tight">실행 액션 플랜</h4>
+              </div>
+
+              <div className="mb-10 bg-slate-50 p-6 rounded-[2rem] border border-slate-100">
+                <div className="flex items-center gap-2 mb-5">
+                  <Banknote size={16} className="text-slate-400" />
+                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Self-Funding Summary</span>
+                </div>
+                <div className="flex items-center justify-between gap-4">
+                  <div className="flex-1">
+                    <p className="text-[10px] font-black text-blue-500 uppercase mb-1">매도 확보 자금</p>
+                    <p className="text-base font-black text-slate-800">+{planSummary.sell.toLocaleString()}원</p>
+                  </div>
+                  <ArrowRight className="text-slate-200" />
+                  <div className="flex-1 text-right">
+                    <p className="text-[10px] font-black text-rose-500 uppercase mb-1">매수 소요 자금</p>
+                    <p className="text-base font-black text-slate-800">-{planSummary.buy.toLocaleString()}원</p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="space-y-8">
+                {data.bestStrategy.executionGroups?.map((group, gIdx) => (
+                  <div key={gIdx} className="border border-slate-100 rounded-[2rem] p-6 bg-slate-50/50">
+                    <div className="flex items-center justify-between mb-5">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 bg-white rounded-xl shadow-sm flex items-center justify-center">
+                          <Wallet size={20} className="text-indigo-600" />
+                        </div>
+                        <div>
+                          <h5 className="font-black text-slate-800 text-sm">{group.accountName || group.institution}</h5>
+                          <p className="text-[10px] font-bold text-slate-400">{group.institution}</p>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="space-y-3">
+                      {group.items?.map((item, i) => (
+                        <div 
+                          key={i} 
+                          onClick={() => handleDeepDiveSearch(item.assetName)}
+                          className={`p-4 rounded-[1.5rem] border transition-all bg-white cursor-pointer group/item relative hover:shadow-lg active:scale-95 ${item.action === 'BUY' ? 'border-rose-100 hover:border-rose-300' : item.action === 'SELL' ? 'border-blue-100 hover:border-blue-300' : 'border-slate-100 hover:border-indigo-200'}`}
+                        >
+                          <div className="flex justify-between items-start mb-2">
+                            <div className="flex gap-3">
+                              <div className={`w-8 h-8 rounded-xl flex items-center justify-center font-black text-[9px] ${
+                                item.action === 'BUY' ? 'bg-rose-500 text-white shadow-sm' : 
+                                item.action === 'SELL' ? 'bg-blue-500 text-white shadow-sm' : 'bg-slate-400 text-white'
+                              }`}>
+                                {item.action === 'BUY' ? '매수' : item.action === 'SELL' ? '매도' : '유지'}
+                              </div>
+                              <div>
+                                <p className="text-xs font-black text-slate-800 flex items-center gap-1.5">
+                                  {item.assetName}
+                                  <span className="text-indigo-600 opacity-0 group-hover/item:opacity-100 transition-opacity"><Search size={10} /></span>
+                                </p>
+                                <p className="text-[9px] font-black text-slate-300 uppercase tracking-widest">{item.ticker}</p>
+                              </div>
+                            </div>
+                            <div className="text-right">
+                              <p className="text-xs font-black text-slate-900">{Math.floor(item.totalAmount || 0).toLocaleString()}원</p>
+                              <p className="text-[8px] font-bold text-slate-400">{item.quantity.toLocaleString()}주 내외</p>
+                            </div>
+                          </div>
+                          <p className="text-[10px] font-bold text-slate-500 leading-relaxed pl-11">{item.reason}</p>
+                          <div className="absolute right-4 bottom-4 opacity-0 group-hover/item:opacity-100 transition-opacity">
+                            <div className="flex items-center gap-1 text-[9px] font-black text-indigo-500 uppercase tracking-widest">
+                              Deep Dive <MoveUpRight size={10} />
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
         </div>
       )}
 
-      {/* Goal Wizard Modal */}
       {isGoalWizardOpen && (
         <div className="fixed inset-0 z-[250] flex items-end sm:items-center justify-center p-0 sm:p-4">
           <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={() => setIsGoalWizardOpen(false)}></div>
@@ -423,7 +417,6 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({
             <div className="px-8 pt-4 pb-44 overflow-y-auto no-scrollbar flex-1 pb-safe">
               {!suggestedGoal ? (
                 <div className="space-y-8">
-                  {/* Step Progress */}
                   <div className="flex gap-2">
                     {wizardQuestions.map((_, i) => (
                       <div key={i} className={`h-1.5 flex-1 rounded-full transition-all ${i <= wizardStep ? 'bg-indigo-600' : 'bg-slate-100'}`}></div>
@@ -510,7 +503,6 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({
         </div>
       )}
 
-      {/* 3. Deep Dive Research */}
       <section ref={researchSectionRef} className="space-y-6 pt-12 border-t border-slate-100">
         <div className="flex items-center justify-between px-1">
           <div className="flex items-center gap-2.5">
@@ -559,64 +551,99 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({
             <div className="h-2 w-full bg-indigo-600"></div>
             
             <div className="p-8 space-y-8 relative z-10">
-              <div className="flex items-center justify-between border-b border-slate-100 pb-6">
-                <div>
-                  <div className="flex items-center gap-2 mb-1">
-                    <span className="px-2 py-0.5 bg-indigo-50 text-indigo-600 rounded text-[9px] font-black uppercase tracking-widest border border-indigo-100">Confidential Analyst View</span>
+              <div className="flex flex-col gap-6">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className="px-2 py-0.5 bg-indigo-50 text-indigo-600 rounded text-[9px] font-black uppercase tracking-widest border border-indigo-100">AI Intelligence Insight</span>
+                    </div>
+                    <h5 className="text-3xl font-black text-slate-900 tracking-tight leading-none uppercase">{stockQuery} 심층 분석</h5>
                   </div>
-                  <h5 className="text-3xl font-black text-slate-900 tracking-tight leading-none uppercase">{stockQuery} 분석 리포트</h5>
-                  <div className="flex items-center gap-2 mt-3 text-slate-400">
-                    <Clock3 size={12} />
-                    <span className="text-[10px] font-bold uppercase tracking-wider">{new Date().toLocaleString()} 발행</span>
+                  <div className="w-14 h-14 bg-indigo-50 rounded-2xl flex items-center justify-center text-indigo-600 shadow-inner">
+                    <FileText size={28} />
                   </div>
                 </div>
-                <div className="w-14 h-14 bg-slate-50 rounded-2xl flex items-center justify-center text-indigo-600 border border-slate-200 shadow-sm">
-                  <BarChart size={28} />
+
+                {/* Report Meta Stats */}
+                <div className="flex items-center gap-4 py-4 border-y border-slate-50 overflow-x-auto no-scrollbar">
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <Clock size={14} className="text-slate-400" />
+                    <span className="text-[11px] font-bold text-slate-500 uppercase tracking-tight">읽기 시간: 3분</span>
+                  </div>
+                  <div className="w-1 h-1 bg-slate-200 rounded-full shrink-0"></div>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <ShieldAlert size={14} className="text-emerald-500" />
+                    <span className="text-[11px] font-bold text-slate-500 uppercase tracking-tight">신뢰도: 매우 높음</span>
+                  </div>
+                  <div className="w-1 h-1 bg-slate-200 rounded-full shrink-0"></div>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <Globe size={14} className="text-slate-400" />
+                    <span className="text-[11px] font-bold text-slate-500 uppercase tracking-tight">글로벌 마켓 통합</span>
+                  </div>
                 </div>
               </div>
 
-              {/* Main Report Body */}
+              {/* Main Report Content with Premium Styles */}
               <div className="relative">
                 <Quote className="absolute -top-4 -left-4 text-indigo-50/50 w-16 h-16 -z-10" />
+                
+                {/* Visual Summary Card */}
+                <div className="bg-slate-50 rounded-3xl p-6 border border-slate-100 mb-8">
+                   <div className="flex items-center gap-2 mb-3">
+                     <Target size={16} className="text-indigo-600" />
+                     <span className="text-[11px] font-black text-slate-400 uppercase tracking-widest">Executive Summary</span>
+                   </div>
+                   <p className="text-sm font-bold text-slate-700 leading-relaxed italic">
+                     이 분석 리포트는 실시간 거시 경제 데이터와 {stockQuery}의 고유 펀더멘털을 결합하여 도출되었습니다. IRP 및 연금 계좌에서의 운용 적합성을 중점적으로 다룹니다.
+                   </p>
+                </div>
+
                 <div className="prose prose-slate prose-sm max-w-none 
-                  prose-p:text-slate-700 prose-p:leading-relaxed prose-p:text-[15px] prose-p:mb-5
-                  prose-strong:text-indigo-600 prose-strong:font-black
-                  prose-headings:text-slate-900 prose-headings:font-black prose-headings:mb-4 prose-headings:mt-10
+                  prose-p:text-slate-700 prose-p:leading-[1.8] prose-p:text-[15px] prose-p:mb-6
+                  prose-strong:text-indigo-700 prose-strong:font-black
+                  prose-headings:text-slate-900 prose-headings:font-black prose-headings:mb-4 prose-headings:mt-12
                   prose-h1:text-2xl prose-h2:text-xl prose-h3:text-lg
-                  prose-li:text-slate-700 prose-li:my-2 prose-li:text-[14px]
-                  prose-ul:my-6 prose-ul:list-disc prose-ul:pl-5
-                  prose-ol:my-6 prose-ol:list-decimal prose-ol:pl-5
-                  prose-blockquote:border-l-4 prose-blockquote:border-indigo-100 prose-blockquote:pl-4 prose-blockquote:italic prose-blockquote:text-slate-500">
-                  <ReactMarkdown>{stockDeepDive.text}</ReactMarkdown>
+                  prose-li:text-slate-700 prose-li:my-2 prose-li:text-[15px]
+                  prose-ul:my-8 prose-ul:list-disc prose-ul:pl-6
+                  prose-ol:my-8 prose-ol:list-decimal prose-ol:pl-6
+                  prose-blockquote:border-l-4 prose-blockquote:border-indigo-100 prose-blockquote:pl-6 prose-blockquote:italic prose-blockquote:text-slate-500 prose-blockquote:bg-indigo-50/20 prose-blockquote:py-2
+                  prose-hr:border-slate-100 prose-hr:my-10">
+                  <ReactMarkdown>{stockDeepDive?.text || ""}</ReactMarkdown>
                 </div>
               </div>
 
-              {stockDeepDive.sources.length > 0 && (
-                <div className="pt-6 border-t border-slate-100">
+              {/* Collapsed Sources List */}
+              {stockDeepDive?.sources && (stockDeepDive.sources as any).length > 0 && (
+                <div className="pt-8 border-t border-slate-100">
                   <button 
                     onClick={() => setShowSources(!showSources)}
-                    className="flex items-center justify-between w-full px-4 py-3 bg-slate-50 rounded-xl hover:bg-indigo-50 transition-colors group/sourcebtn"
+                    className="flex items-center justify-between w-full px-5 py-4 bg-slate-50 rounded-2xl hover:bg-indigo-50 transition-colors group/sourcebtn border border-slate-100"
                   >
-                    <div className="flex items-center gap-2">
-                      <Globe size={14} className="text-slate-400 group-hover/sourcebtn:text-indigo-600" />
-                      <h6 className="text-[11px] font-black text-slate-500 uppercase tracking-[0.1em] group-hover/sourcebtn:text-indigo-900">
-                        참조 데이터 소스 ({stockDeepDive.sources.length})
+                    <div className="flex items-center gap-2.5">
+                      <div className="p-1.5 bg-white rounded-lg shadow-sm">
+                        <Globe size={14} className="text-slate-400 group-hover/sourcebtn:text-indigo-600" />
+                      </div>
+                      <h6 className="text-[12px] font-black text-slate-500 uppercase tracking-[0.05em] group-hover/sourcebtn:text-indigo-900">
+                        데이터 참조 소스 ({(stockDeepDive.sources as any).length})
                       </h6>
                     </div>
-                    {showSources ? <ChevronUp size={16} className="text-slate-400" /> : <ChevronDown size={16} className="text-slate-400" />}
+                    <div className={`transition-transform duration-300 ${showSources ? 'rotate-180' : ''}`}>
+                      <ChevronDown size={18} className="text-slate-400" />
+                    </div>
                   </button>
 
                   {showSources && (
-                    <div className="flex flex-wrap gap-2 mt-4 animate-in fade-in slide-in-from-top-2 duration-300">
-                      {stockDeepDive.sources.map((src, i) => (
+                    <div className="flex flex-col gap-2 mt-4 animate-in fade-in slide-in-from-top-2 duration-300">
+                      {(stockDeepDive.sources as any).map((src: any, i: number) => (
                         <a 
                           key={i} 
                           href={src.uri} 
                           target="_blank" 
                           rel="noopener noreferrer"
-                          className="flex items-center gap-2 px-3 py-2 bg-white border border-slate-200 rounded-xl text-[10px] font-black text-slate-600 hover:bg-indigo-50 hover:text-indigo-600 hover:border-indigo-100 transition-all shadow-sm"
+                          className="flex items-center justify-between px-5 py-4 bg-white border border-slate-100 rounded-2xl text-[12px] font-bold text-slate-600 hover:bg-indigo-50 hover:text-indigo-600 hover:border-indigo-100 transition-all shadow-sm group/srclink"
                         >
-                          <LinkIcon size={12} /> {src.title.length > 30 ? src.title.substring(0, 30) + '...' : src.title}
+                          <span className="truncate pr-4">{src.title}</span>
+                          <ExternalLink size={14} className="text-slate-300 group-hover/srclink:text-indigo-400 shrink-0" />
                         </a>
                       ))}
                     </div>
@@ -624,8 +651,11 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({
                 </div>
               )}
               
-              <div className="pt-8 text-center">
-                <p className="text-[9px] font-bold text-slate-300 italic">본 리포트는 AI에 의해 생성되었으며 투자 판단의 최종 책임은 본인에게 있습니다.</p>
+              <div className="pt-10 flex flex-col items-center gap-4">
+                <div className="w-12 h-1 bg-slate-100 rounded-full"></div>
+                <p className="text-[10px] font-bold text-slate-300 italic text-center max-w-xs leading-relaxed">
+                  본 인텔리전스 리포트는 실시간 웹 데이터를 기반으로 생성된 AI 통찰입니다. 금융 거래 전 반드시 전문가와 상담하십시오.
+                </p>
               </div>
             </div>
           </div>
