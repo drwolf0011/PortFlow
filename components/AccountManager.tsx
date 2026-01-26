@@ -6,7 +6,9 @@ import {
   ShieldCheck, ChevronRight, Eye, EyeOff, AlertCircle, Briefcase, Landmark,
   Edit3, Save, X
 } from 'lucide-react';
-import { Link } from 'react-router-dom';
+/* Fix: Using wildcard import for react-router-dom to resolve named export errors */
+import * as ReactRouterDOM from 'react-router-dom';
+const { Link } = ReactRouterDOM;
 
 interface AccountManagerProps {
   accounts: Account[];

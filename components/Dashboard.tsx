@@ -9,7 +9,9 @@ import {
   Layers, Coins, ArrowRightLeft, Trophy, AlertCircle,
   TrendingDown, Landmark, Tag, Check, Award, BarChart4, MoveRight
 } from 'lucide-react';
-import { Link } from 'react-router-dom';
+/* Fix: Using wildcard import for react-router-dom to resolve named export errors */
+import * as ReactRouterDOM from 'react-router-dom';
+const { Link } = ReactRouterDOM;
 import { 
   Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell

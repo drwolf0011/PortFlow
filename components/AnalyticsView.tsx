@@ -9,16 +9,17 @@ import {
   Info, BarChart3, Globe, MapPin,
   Layers, Package, Tag, ArrowRight
 } from 'lucide-react';
-import { Link } from 'react-router-dom';
+/* Fix: Using wildcard import for react-router-dom to resolve named export errors */
+import * as ReactRouterDOM from 'react-router-dom';
+const { Link } = ReactRouterDOM;
 
 interface AnalyticsViewProps {
   history: {date: string, value: number}[];
   assets: Asset[];
   exchangeRate: number;
-  refreshTick: number;
 }
 
-const AnalyticsView: React.FC<AnalyticsViewProps> = ({ history, assets, exchangeRate, refreshTick }) => {
+const AnalyticsView: React.FC<AnalyticsViewProps> = ({ history, assets, exchangeRate }) => {
   const [range, setRange] = useState('1M');
   const [region, setRegion] = useState<'ALL' | 'KRW' | 'USD'>('ALL');
 
@@ -96,6 +97,7 @@ const AnalyticsView: React.FC<AnalyticsViewProps> = ({ history, assets, exchange
         </div>
       </div>
 
+      {/* Fix: Wrap className string in quotes to resolve 'boolean' not assignable to 'string' error */}
       <div className="p-5 space-y-6">
         <section className={`rounded-[2.5rem] p-7 text-white shadow-xl relative overflow-hidden transition-colors duration-500 ${region === 'ALL' ? 'bg-indigo-600' : region === 'KRW' ? 'bg-blue-600' : 'bg-amber-600'}`}>
           <div className="relative z-10">

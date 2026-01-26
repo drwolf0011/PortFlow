@@ -1,6 +1,8 @@
 
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { HashRouter, Routes, Route, Link, useLocation, useNavigate } from 'react-router-dom';
+/* Fix: Using wildcard import for react-router-dom to resolve named export errors in this environment */
+import * as ReactRouterDOM from 'react-router-dom';
+const { HashRouter, Routes, Route, Link, useLocation, useNavigate } = ReactRouterDOM;
 import { 
   Home, Wallet, LineChart, Cpu, PlusCircle, Settings,
   RefreshCw, CheckCircle2, LogOut, RotateCcw, X,
@@ -90,7 +92,6 @@ const AppContent: React.FC = () => {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isUpdatingPrices, setIsUpdatingPrices] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
-  const [refreshTick, setRefreshTick] = useState(0);
   const [inputApiKey, setInputApiKey] = useState('');
   const [inputBinId, setInputBinId] = useState('');
 
@@ -352,9 +353,6 @@ const AppContent: React.FC = () => {
     }
   }, [localUpdateTimestamp, isAuthenticated, handleSync, syncConfig.autoSync]);
 
-  /**
-   * 시세 업데이트 처리 로직 고도화 (배치 처리 피드백 강화)
-   */
   const handleUpdatePrices = async () => {
     if (assets.length === 0) {
       showToast("업데이트할 자산이 없습니다.");
@@ -362,10 +360,9 @@ const AppContent: React.FC = () => {
     }
     setIsUpdatingPrices(true);
     try {
-      // 1. 서비스 호출 (내부적으로 배치 처리 수행)
+      // 최적화된 시세 업데이트 함수 호출
       const { updatedAssets, exchangeRate: newRate } = await updateAssetPrices(assets);
       
-      // 2. 환율 상태 업데이트
       let finalRate = dynamicExchangeRate;
       if (newRate) {
         setDynamicExchangeRate(newRate);
@@ -373,10 +370,8 @@ const AppContent: React.FC = () => {
         localStorage.setItem('portflow_exchange_rate', newRate.toString());
       }
 
-      // 3. 자산 리스트 업데이트
       setAssets(updatedAssets);
 
-      // 4. 총 자산 평가액 정밀 계산 및 히스토리 기록
       const totalVal = updatedAssets.reduce((acc, cur) => {
         const mult = cur.currency === 'USD' ? finalRate : 1;
         return acc + (cur.currentPrice * cur.quantity * mult);
@@ -389,7 +384,6 @@ const AppContent: React.FC = () => {
       });
 
       setLastUpdated(new Date().toLocaleString());
-      setRefreshTick(prev => prev + 1);
       
       const count = updatedAssets.filter(a => a.type !== AssetType.CASH).length;
       if (newRate) {
@@ -529,10 +523,10 @@ const AppContent: React.FC = () => {
       <div className="flex-1 overflow-y-auto no-scrollbar bg-[#F4F7FB]">
         <Routes>
           <Route path="/" element={<Dashboard assets={assets} accounts={accounts} transactions={transactions} user={user} onRefresh={handleUpdatePrices} isUpdating={isUpdatingPrices} lastUpdated={lastUpdated} history={history} exchangeRate={dynamicExchangeRate} />} />
-          <Route path="/assets" element={<AssetList assets={assets} setAssets={setAssets} onAddAsset={() => { setEditingAsset(undefined); setIsManualModalOpen(true); }} onEditAsset={(a) => { setEditingAsset(a); setIsManualModalOpen(true); }} onDeleteAsset={handleDeleteAsset} onSync={handleLocalSync} onRefreshPrices={handleUpdatePrices} isRefreshing={isUpdatingPrices} exchangeRate={dynamicExchangeRate} refreshTick={refreshTick} accounts={accounts} />} />
+          <Route path="/assets" element={<AssetList assets={assets} setAssets={setAssets} onAddAsset={() => { setEditingAsset(undefined); setIsManualModalOpen(true); }} onEditAsset={(a) => { setEditingAsset(a); setIsManualModalOpen(true); }} onDeleteAsset={handleDeleteAsset} onSync={handleLocalSync} onRefreshPrices={handleUpdatePrices} isRefreshing={isUpdatingPrices} exchangeRate={dynamicExchangeRate} accounts={accounts} />} />
           <Route path="/advisor" element={<AIAdvisor assets={assets} accounts={accounts} onApplyRebalancing={(inst) => showToast(`${inst} 리밸런싱 시뮬레이션 전송`)} exchangeRate={dynamicExchangeRate} onSaveStrategy={handleSaveStrategy} savedStrategies={savedStrategies} onDeleteStrategy={handleDeleteStrategy} user={user} onUpdateUser={handleUpdateUser} />} />
           <Route path="/history" element={<TransactionHistory transactions={transactions} accounts={accounts} onDelete={handleDeleteTransaction} onEdit={(tx) => { setEditingTransaction(tx); setIsTransactionModalOpen(true); }} onUpdate={handleUpdateTransactions} exchangeRate={dynamicExchangeRate} />} />
-          <Route path="/analytics" element={<AnalyticsView history={history} assets={assets} exchangeRate={dynamicExchangeRate} refreshTick={refreshTick} />} />
+          <Route path="/analytics" element={<AnalyticsView history={history} assets={assets} exchangeRate={dynamicExchangeRate} />} />
           <Route path="/accounts" element={<AccountManager accounts={accounts} setAccounts={setAccounts} assets={assets} exchangeRate={dynamicExchangeRate} />} />
         </Routes>
       </div>
@@ -544,7 +538,7 @@ const AppContent: React.FC = () => {
           <div className="relative -top-8 px-2">
             <button 
               onClick={() => { setEditingTransaction(undefined); setIsTransactionModalOpen(true); }} 
-              className="w-16 h-16 bg-indigo-600 rounded-full flex items-center justify-center text-white shadow-2xl shadow-indigo-400 active:scale-90 transition-all border-4 border-white"
+              className="w-16 h-16 bg-indigo-600 rounded-full flex items-center justify-center text-white shadow-2xl shadow-indigo-400 active:scale-95 transition-all border-4 border-white"
             >
               <PlusCircle size={32} />
             </button>

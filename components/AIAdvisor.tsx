@@ -36,10 +36,11 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({
   const [showSources, setShowSources] = useState(false); 
   const [stockQuery, setStockQuery] = useState('');
   const [searchLoading, setSearchLoading] = useState(false);
-  const [stockDeepDive, setStockDeepDive] = useState<{ text: string, sources: { title: string; uri: string } } | null>(null);
+  const [stockDeepDive, setStockDeepDive] = useState<{ text: string, sources: { title: string; uri: string }[] } | null>(null);
   const [isSavedModalOpen, setIsSavedModalOpen] = useState(false);
   const [isGoalWizardOpen, setIsGoalWizardOpen] = useState(false);
   const [loadedStrategyId, setLoadedStrategyId] = useState<string | null>(null);
+  const [errorInfo, setErrorInfo] = useState<string | null>(null);
   const researchSectionRef = useRef<HTMLDivElement>(null);
 
   // Goal Wizard State
@@ -61,13 +62,14 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({
     }
     setLoading(true);
     setData(null);
+    setErrorInfo(null);
     setLoadedStrategyId(null);
     try {
       const result = await getAIAnalysis(assets, accounts || [], exchangeRate, user);
       setData(result);
     } catch (err: any) {
       console.error(err);
-      alert(err.message || "분석 로드 중 오류가 발생했습니다. 응답이 길어 처리 중 문제가 발생했을 수 있습니다.");
+      setErrorInfo(err.message || "분석 로드 중 오류가 발생했습니다.");
     } finally {
       setLoading(false);
     }
@@ -80,7 +82,7 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({
     setSearchLoading(true);
     setStockQuery(finalQuery);
     setStockDeepDive(null);
-    setShowSources(false); // 소스 리스트 기본적으로 닫기
+    setShowSources(false); 
     
     researchSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 
@@ -108,6 +110,7 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({
       sources: []
     };
     setData(reconstructedData);
+    setErrorInfo(null);
     setLoadedStrategyId(saved.id);
     setIsSavedModalOpen(false);
   };
@@ -240,6 +243,24 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({
             <p className="text-sm font-black text-slate-800">개인별 맞춤 지침 분석 중</p>
             <p className="text-[10px] text-slate-400 font-bold mt-1">계좌별 규정 • 사용자 목표 • 시장 상황 대조 중</p>
           </div>
+        </div>
+      )}
+
+      {errorInfo && !loading && (
+        <div className="p-6 bg-rose-50 border border-rose-100 rounded-[2.5rem] flex flex-col items-center text-center space-y-4 animate-in zoom-in-95">
+          <div className="w-12 h-12 bg-rose-100 text-rose-600 rounded-2xl flex items-center justify-center">
+            <AlertTriangle size={24} />
+          </div>
+          <div>
+            <h4 className="text-sm font-black text-rose-900">분석을 완료하지 못했습니다</h4>
+            <p className="text-xs font-bold text-rose-700/70 mt-1 leading-relaxed">{errorInfo}</p>
+          </div>
+          <button 
+            onClick={fetchAnalysis}
+            className="px-6 py-2.5 bg-rose-600 text-white text-xs font-black rounded-full shadow-lg shadow-rose-200 active:scale-95 transition-all"
+          >
+            다시 시도
+          </button>
         </div>
       )}
 
@@ -613,7 +634,7 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({
               </div>
 
               {/* Collapsed Sources List */}
-              {stockDeepDive?.sources && (stockDeepDive.sources as any).length > 0 && (
+              {stockDeepDive?.sources && stockDeepDive.sources.length > 0 && (
                 <div className="pt-8 border-t border-slate-100">
                   <button 
                     onClick={() => setShowSources(!showSources)}
@@ -624,7 +645,7 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({
                         <Globe size={14} className="text-slate-400 group-hover/sourcebtn:text-indigo-600" />
                       </div>
                       <h6 className="text-[12px] font-black text-slate-500 uppercase tracking-[0.05em] group-hover/sourcebtn:text-indigo-900">
-                        데이터 참조 소스 ({(stockDeepDive.sources as any).length})
+                        데이터 참조 소스 ({stockDeepDive.sources.length})
                       </h6>
                     </div>
                     <div className={`transition-transform duration-300 ${showSources ? 'rotate-180' : ''}`}>
@@ -634,7 +655,7 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({
 
                   {showSources && (
                     <div className="flex flex-col gap-2 mt-4 animate-in fade-in slide-in-from-top-2 duration-300">
-                      {(stockDeepDive.sources as any).map((src: any, i: number) => (
+                      {stockDeepDive.sources.map((src, i: number) => (
                         <a 
                           key={i} 
                           href={src.uri} 

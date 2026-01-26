@@ -6,7 +6,9 @@ import {
   Globe, CreditCard, History, RotateCcw, Landmark, 
   ChevronDown, X, Check, Calculator, TrendingUp, ArrowDownRight
 } from 'lucide-react';
-import { Link } from 'react-router-dom';
+/* Fix: Using wildcard import for react-router-dom to resolve named export errors */
+import * as ReactRouterDOM from 'react-router-dom';
+const { Link } = ReactRouterDOM;
 
 interface AssetListProps {
   assets: Asset[];
@@ -18,13 +20,12 @@ interface AssetListProps {
   onRefreshPrices: () => void;
   isRefreshing: boolean;
   exchangeRate: number;
-  refreshTick: number;
   accounts: Account[];
 }
 
 const AssetList: React.FC<AssetListProps> = ({ 
   assets, onAddAsset, onDeleteAsset, onEditAsset, onSync, 
-  onRefreshPrices, isRefreshing, exchangeRate, refreshTick, accounts 
+  onRefreshPrices, isRefreshing, exchangeRate, accounts 
 }) => {
   const [activeType, setActiveType] = useState<string>('ALL');
   const [selectedAccountId, setSelectedAccountId] = useState<string>('ALL');

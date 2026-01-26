@@ -23,11 +23,6 @@ export interface PriceUpdateResult {
   exchangeRate?: number;
 }
 
-export interface HistoryPoint {
-  date: string;
-  price: number;
-}
-
 // 시세 캐시 인터페이스 및 전역 캐시 객체
 interface CachedPrice {
   price: number;
@@ -36,37 +31,71 @@ interface CachedPrice {
 const PRICE_CACHE = new Map<string, CachedPrice>();
 const CACHE_TTL = 10 * 60 * 1000; // 10분 동안 캐시 유효
 
+/**
+ * JSON 응답이 중간에 잘린 경우(Truncation)를 대비한 복구형 파서
+ */
 const safeJsonParse = (text: string) => {
-  try {
-    if (!text) return null;
-    // 마크다운 코드 블록 제거
-    const cleaned = text.replace(/```json|```/g, "").trim();
-    
-    // JSON 블록만 추출하는 정규식 개선
-    const firstChar = cleaned.indexOf('{');
-    const lastChar = cleaned.lastIndexOf('}');
-    const firstArrayChar = cleaned.indexOf('[');
-    const lastArrayChar = cleaned.lastIndexOf(']');
-    
-    let jsonStr = "";
-    if (firstChar !== -1 && lastChar !== -1 && (firstArrayChar === -1 || firstChar < firstArrayChar)) {
-      jsonStr = cleaned.substring(firstChar, lastChar + 1);
-    } else if (firstArrayChar !== -1 && lastArrayChar !== -1) {
-      jsonStr = cleaned.substring(firstArrayChar, lastArrayChar + 1);
-    } else {
-      jsonStr = cleaned;
-    }
+  if (!text) return null;
+  
+  // 마크다운 코드 블록 제거
+  let cleaned = text.replace(/```json|```/g, "").trim();
+  
+  // JSON 시작 지점 찾기
+  const firstBrace = cleaned.indexOf('{');
+  const firstBracket = cleaned.indexOf('[');
+  let startIdx = -1;
+  let isArray = false;
 
+  if (firstBrace !== -1 && (firstBracket === -1 || firstBrace < firstBracket)) {
+    startIdx = firstBrace;
+    isArray = false;
+  } else if (firstBracket !== -1) {
+    startIdx = firstBracket;
+    isArray = true;
+  }
+
+  if (startIdx === -1) return null;
+  cleaned = cleaned.substring(startIdx);
+
+  // 1차 시도: 표준 파싱
+  try {
+    return JSON.parse(cleaned);
+  } catch (e) {
+    console.warn("표준 JSON 파싱 실패, 복구 시도 중...");
+    
+    // 2차 시도: 잘린 JSON 복구 로직
     try {
-      return JSON.parse(jsonStr);
-    } catch (parseError: any) {
-      console.warn("JSON 파싱 실패, 정화 후 재시도:", parseError.message);
-      // 기본적인 잘림 현상(Truncation) 대응: 괄호가 닫히지 않은 경우 강제로 닫아보는 시도 등은 복잡하므로 null 반환 후 상위에서 처리
+      let repaired = cleaned;
+      
+      // 1. 열린 따옴표 닫기 (문자열 도중 잘림 방지)
+      const quoteCount = (repaired.match(/"/g) || []).length;
+      if (quoteCount % 2 !== 0) {
+        repaired += '"';
+      }
+
+      // 2. 스택을 이용해 누락된 괄호 추적 및 보정
+      const stack: string[] = [];
+      for (let i = 0; i < repaired.length; i++) {
+        const char = repaired[i];
+        if (char === '{') stack.push('}');
+        else if (char === '[') stack.push(']');
+        else if (char === '}') {
+          if (stack[stack.length - 1] === '}') stack.pop();
+        } else if (char === ']') {
+          if (stack[stack.length - 1] === ']') stack.pop();
+        }
+      }
+
+      // 역순으로 닫히지 않은 괄호 추가
+      while (stack.length > 0) {
+        repaired += stack.pop();
+      }
+
+      return JSON.parse(repaired);
+    } catch (repairedError) {
+      console.error("JSON 복구 파싱 최종 실패:", repairedError);
       return null;
     }
-  } catch (e) {
-    console.error("safeJsonParse Error:", e);
-    return null;
   }
 };
 
@@ -160,100 +189,117 @@ const chunkArray = <T>(array: T[], size: number): T[][] => {
   return chunks;
 };
 
+/**
+ * 자산 시세를 일괄 업데이트합니다.
+ * 중복 종목을 제거하고 캐싱을 적용하여 효율적으로 처리합니다.
+ */
 export const updateAssetPrices = async (assets: Asset[]): Promise<PriceUpdateResult> => {
   const now = Date.now();
-  const allUpdatedPrices: { id: string, price: number }[] = [];
+  const allUpdatedPrices: Record<string, number> = {};
   let latestExchangeRate: number | undefined;
 
-  const needUpdate: Asset[] = [];
+  // 1. 업데이트가 필요한 유니크한 종목 리스트 추출 (현금 제외)
+  const uniqueItemsMap = new Map<string, { name: string; ticker?: string; currency: string }>();
+  
   assets.forEach(asset => {
     if (asset.type === AssetType.CASH) return;
     
-    const cacheKey = `${asset.ticker || asset.name}_${asset.currency}`;
-    const cached = PRICE_CACHE.get(cacheKey);
+    // 유니크 키 생성 (티커 우선, 없으면 이름 + 통화)
+    const key = `${asset.ticker || asset.name}_${asset.currency}`;
+    const cached = PRICE_CACHE.get(key);
     
+    // 캐시 확인 (10분 이내 데이터가 있으면 API 요청 대상에서 제외)
     if (cached && (now - cached.timestamp < CACHE_TTL)) {
-      allUpdatedPrices.push({ id: asset.id, price: cached.price });
-    } else {
-      needUpdate.push(asset);
+      allUpdatedPrices[key] = cached.price;
+    } else if (!uniqueItemsMap.has(key)) {
+      uniqueItemsMap.set(key, { 
+        name: asset.name, 
+        ticker: asset.ticker, 
+        currency: asset.currency 
+      });
     }
   });
 
-  if (needUpdate.length === 0) {
-    return { 
-      updatedAssets: assets.map(a => {
-        const p = allUpdatedPrices.find(up => up.id === a.id);
-        return p ? { ...a, currentPrice: p.price } : a;
-      }),
-      exchangeRate: undefined
-    };
-  }
+  const needUpdate = Array.from(uniqueItemsMap.entries());
 
-  const assetChunks = chunkArray(needUpdate, 10);
+  // 2. 조회가 필요한 항목이 있다면 AI에게 요청 (10개씩 배치 처리)
+  if (needUpdate.length > 0) {
+    const itemChunks = chunkArray(needUpdate, 10);
 
-  for (const chunk of assetChunks) {
-    const chunkInfo = chunk.map(a => ({ id: a.id, name: a.name, ticker: a.ticker, currency: a.currency }));
-    
-    const prompt = `
-      [실시간 금융 데이터 업데이트]
-      1. 다음 자산 리스트에 대해 실시간 시장 가격을 조사하세요.
-      2. 티커(Ticker)가 있다면 티커를 우선적으로 검색하세요.
-      3. 미국 주식/ETF는 USD($), 한국 주식/ETF는 KRW(₩) 가격을 추출하세요.
-      4. 실시간 USD/KRW 환율도 함께 조사하세요.
+    for (const chunk of itemChunks) {
+      const chunkData = chunk.map(([key, info]) => ({
+        key,
+        name: info.name,
+        ticker: info.ticker,
+        currency: info.currency
+      }));
 
-      조사 대상: ${JSON.stringify(chunkInfo)}
-    `;
+      const prompt = `
+        [실시간 금융 데이터 업데이트]
+        다음 자산 리스트에 대해 최신 시장 가격을 조사하세요.
+        반드시 제시된 "key" 값을 JSON 응답의 키로 사용해야 합니다.
+        미국 주식은 USD, 한국 주식은 KRW 단위 가격을 응답하세요.
+        실시간 USD/KRW 환율 정보도 포함하세요.
 
-    try {
-      const response = await generateContentWithRetry({
-        model: 'gemini-3-pro-preview', 
-        contents: prompt,
-        config: {
-          tools: [{ googleSearch: {} }],
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              prices: {
-                type: Type.ARRAY,
-                items: {
-                  type: Type.OBJECT,
-                  properties: { id: { type: Type.STRING }, price: { type: Type.NUMBER } },
-                  required: ["id", "price"]
-                }
+        조사 대상: ${JSON.stringify(chunkData)}
+      `;
+
+      try {
+        const response = await generateContentWithRetry({
+          model: 'gemini-3-pro-preview', 
+          contents: prompt,
+          config: {
+            tools: [{ googleSearch: {} }],
+            responseMimeType: "application/json",
+            responseSchema: {
+              type: Type.OBJECT,
+              properties: {
+                prices: {
+                  type: Type.ARRAY,
+                  items: {
+                    type: Type.OBJECT,
+                    properties: { 
+                      key: { type: Type.STRING }, 
+                      price: { type: Type.NUMBER } 
+                    },
+                    required: ["key", "price"]
+                  }
+                },
+                exchangeRate: { type: Type.NUMBER }
               },
-              exchangeRate: { type: Type.NUMBER }
-            },
-            required: ["prices", "exchangeRate"]
-          }
-        }
-      });
-
-      const parsed = safeJsonParse(response.text);
-      if (parsed?.prices) {
-        parsed.prices.forEach((p: any) => {
-          allUpdatedPrices.push(p);
-          const asset = assets.find(a => a.id === p.id);
-          if (asset) {
-            PRICE_CACHE.set(`${asset.ticker || asset.name}_${asset.currency}`, {
-              price: p.price,
-              timestamp: now
-            });
+              required: ["prices", "exchangeRate"]
+            }
           }
         });
+
+        const parsed = safeJsonParse(response.text);
+        if (parsed?.prices) {
+          parsed.prices.forEach((p: any) => {
+            allUpdatedPrices[p.key] = p.price;
+            // 내부 캐시 업데이트
+            PRICE_CACHE.set(p.key, { price: p.price, timestamp: now });
+          });
+        }
+        if (parsed?.exchangeRate) {
+          latestExchangeRate = parsed.exchangeRate;
+        }
+      } catch (error) {
+        console.error("Batch price update failed for chunk", error);
       }
-      if (parsed?.exchangeRate) latestExchangeRate = parsed.exchangeRate;
-    } catch (error) {
-      console.error("Batch update failed", error);
     }
   }
 
-  const finalAssets = assets.map(asset => {
-    const found = allUpdatedPrices.find(p => p.id === asset.id);
-    return found ? { ...asset, currentPrice: found.price } : asset;
+  // 3. 기존 자산 목록에 결과 매핑 (동일 종목은 동일 시세 적용)
+  const updatedAssets = assets.map(asset => {
+    if (asset.type === AssetType.CASH) return asset;
+    
+    const key = `${asset.ticker || asset.name}_${asset.currency}`;
+    const newPrice = allUpdatedPrices[key];
+    
+    return newPrice ? { ...asset, currentPrice: newPrice } : asset;
   });
 
-  return { updatedAssets: finalAssets, exchangeRate: latestExchangeRate };
+  return { updatedAssets, exchangeRate: latestExchangeRate };
 };
 
 export const generateGoalPrompt = async (answers: {
@@ -351,7 +397,11 @@ export const getAIAnalysis = async (
 
     [출력 요구사항]
     - 한국어로 작성하고 JSON 형식을 엄격히 준수하십시오.
-    - **중요: JSON 응답이 너무 길어지지 않도록 currentDiagnosis와 rationale를 핵심 요약 위주로 작성하여 응답이 중간에 잘리지 않게 하십시오.**
+    - **중요: JSON 응답이 너무 길어지지 않도록 아래 글자 수를 준수하세요.**
+    - currentDiagnosis: 250자 이내 핵심 요약
+    - bestStrategy.description: 150자 이내
+    - bestStrategy.rationale: 200자 이내
+    - executionPlanItem.reason: 60자 이내
   `;
 
   try {
@@ -416,7 +466,7 @@ export const getAIAnalysis = async (
     });
 
     if (!parsed) {
-      throw new Error("AI 분석 데이터 파싱에 실패했습니다. 응답이 너무 길어 처리할 수 없습니다.");
+      throw new Error("AI 분석 데이터 파싱에 실패했습니다. 자산 내역이 너무 많거나 응답이 길어 처리할 수 없습니다. 핵심 자산 위주로 다시 시도해보세요.");
     }
 
     return { 
@@ -475,28 +525,6 @@ export const getStockDeepDive = async (query: string): Promise<{ text: string, s
   } catch (error) { return { text: "분석 중 오류 발생", sources: [] }; }
 };
 
-export const getAssetHistory = async (ticker: string, name: string): Promise<HistoryPoint[]> => {
-  const prompt = `"${name}(${ticker})"의 지난 12개월 주간 종가 데이터.`;
-  try {
-    const response = await generateContentWithRetry({
-      model: 'gemini-3-flash-preview',
-      contents: prompt,
-      config: {
-        tools: [{ googleSearch: {} }],
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.ARRAY,
-          items: {
-            type: Type.OBJECT,
-            properties: { date: { type: Type.STRING }, price: { type: Type.NUMBER } }
-          }
-        }
-      }
-    });
-    return (safeJsonParse(response.text) || []) as HistoryPoint[];
-  } catch (error) { return []; }
-};
-
 export const classifyTransactionTypes = async (transactions: {id: string, name: string, institution: string}[]): Promise<any[]> => {
   const prompt = `다음 거래 내역들을 분류하세요: ${JSON.stringify(transactions)}`;
   try {
@@ -516,4 +544,35 @@ export const classifyTransactionTypes = async (transactions: {id: string, name: 
     });
     return safeJsonParse(response.text) || [];
   } catch (error) { return []; }
+};
+
+export const getAssetHistory = async (ticker: string, name: string): Promise<{ date: string, price: number }[]> => {
+  const prompt = `Research the historical daily closing prices for the asset "${ticker || name}" for the last 30 days and return it in JSON format.
+  Response format: [{"date": "YYYY-MM-DD", "price": 12345}, ...]`;
+
+  try {
+    const response = await generateContentWithRetry({
+      model: 'gemini-3-flash-preview',
+      contents: prompt,
+      config: {
+        tools: [{ googleSearch: {} }],
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.ARRAY,
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              date: { type: Type.STRING },
+              price: { type: Type.NUMBER }
+            },
+            required: ["date", "price"]
+          }
+        }
+      }
+    });
+    return (safeJsonParse(response.text) || []) as { date: string, price: number }[];
+  } catch (error) {
+    console.error("Failed to fetch asset history", error);
+    return [];
+  }
 };
