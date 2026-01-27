@@ -8,7 +8,7 @@ import {
   ArrowRight, Lightbulb, ShieldCheck, Wallet,
   BookOpen, Trash2, Settings2, X, PlayCircle, 
   CheckCircle2, ChevronRight, ChevronLeft, MessageSquare,
-  FileText, RefreshCw, BookmarkCheck, Layers, Coins, Hourglass, Heart, Check
+  FileText, RefreshCw, BookmarkCheck, Layers, Coins, Hourglass, Heart, Save, Check
 } from 'lucide-react';
 
 interface AIAdvisorProps {
@@ -39,12 +39,9 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({
   const [strategyLoading, setStrategyLoading] = useState<boolean>(false);
   const [isSavedModalOpen, setIsSavedModalOpen] = useState(false);
   
-  // API 호출 최소화를 위한 컨텍스트 해시 관리
-  // 자산 상태(수량, 가격) + 사용자 목표 정보를 결합
   const contextHash = useMemo(() => {
     const assetsKey = assets.map(a => `${a.id}-${a.quantity}-${a.currentPrice}`).join('|');
-    const userKey = `${user?.investmentGoal || ''}-${user?.goalPrompt || ''}`;
-    return `${assetsKey}#${userKey}`;
+    return `${assetsKey}#${user?.investmentGoal || ''}`;
   }, [assets, user]);
 
   const lastAnalyzedHash = useRef<string | null>(null);
@@ -52,8 +49,6 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({
 
   const fetchDiagnosis = async () => {
     if (assets.length === 0) { alert("자산을 먼저 등록해주세요."); return; }
-    
-    // 이미 동일한 자산 및 목표로 분석된 결과가 있다면 중복 호출 방지
     if (diagnosis && lastAnalyzedHash.current === contextHash) {
       alert("이미 최신 데이터를 기반으로 분석된 결과입니다.");
       return;
@@ -68,7 +63,7 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({
       lastAnalyzedHash.current = contextHash;
     } catch (err: any) {
       const isQuota = err.message?.includes('429') || err.message?.includes('quota');
-      alert(isQuota ? "AI 분석 할당량이 초과되었습니다. 잠시 후 시도하거나 개인 API 키를 등록해주세요." : (err.message || "진단 중 오류 발생"));
+      alert(isQuota ? "AI 분석 할당량이 초과되었습니다." : (err.message || "진단 중 오류 발생"));
     } finally {
       setLoading(false);
     }
@@ -76,8 +71,6 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({
 
   const fetchStrategy = async () => {
     if (!diagnosis) return;
-    
-    // 동일 컨텍스트에서 이미 전략이 생성되었다면 중복 호출 방지
     if (strategy && lastStrategyHash.current === contextHash) {
       alert("이미 현재 상황에 최적화된 전략이 수립되어 있습니다.");
       return;
@@ -99,7 +92,6 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({
   const isDataChanged = lastAnalyzedHash.current !== contextHash;
   const isStrategyChanged = lastStrategyHash.current !== contextHash;
 
-  // Goal Wizard 관련 상태
   const [isGoalWizardOpen, setIsGoalWizardOpen] = useState(false);
   const [wizardStep, setWizardStep] = useState(0);
   const [wizardAnswers, setWizardAnswers] = useState({ age: '', risk: '', purpose: '', horizon: '', preference: '', customRequest: '' });
@@ -131,12 +123,27 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({
     return { buy, sell };
   }, [strategy]);
 
+  const handleSaveDiagnosis = () => {
+    if (!diagnosis) return;
+    const name = prompt("진단 리포트 저장명을 입력하세요:", `자산 정밀 진단 (${new Date().toLocaleDateString()})`);
+    if (name) onSaveStrategy({ type: 'DIAGNOSIS', name: name.trim(), diagnosis });
+  };
+
+  const handleSaveStrategy = () => {
+    if (!strategy) return;
+    const name = prompt("전략 리포트 저장명을 입력하세요:", strategy.name || `최적화 실행 전략 (${new Date().toLocaleDateString()})`);
+    if (name) onSaveStrategy({ type: 'STRATEGY', name: name.trim(), diagnosis: diagnosis || undefined, strategy });
+  };
+
   return (
     <div className="p-5 space-y-8 pb-40 animate-in fade-in duration-500">
       <div className="flex flex-col gap-4 px-1">
          <div className="flex items-center justify-between">
            <h2 className="text-xl font-black text-slate-800 tracking-tight">AI 자산관리자</h2>
-           <button onClick={() => setIsSavedModalOpen(true)} className="flex items-center gap-1.5 px-4 py-2 bg-white border border-slate-200 rounded-full text-[10px] font-black text-slate-600 shadow-sm active:scale-95 transition-all">
+           <button 
+             onClick={() => setIsSavedModalOpen(true)} 
+             className="flex items-center gap-1.5 px-4 py-2 bg-white border border-slate-200 rounded-full text-[10px] font-black text-slate-600 shadow-sm active:scale-95 transition-all"
+           >
              <BookOpen size={12} className="text-indigo-600" /> 보관함 ({savedStrategies.length})
            </button>
          </div>
@@ -186,10 +193,12 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({
                 <div className="p-2.5 bg-indigo-50 text-indigo-600 rounded-xl"><Activity size={20} /></div>
                 <h4 className="text-sm font-black text-slate-800 uppercase tracking-tight">정밀 진단 리포트</h4>
               </div>
-              <button onClick={() => {
-                const name = prompt("진단 리포트 저장명:", `자산 진단 (${new Date().toLocaleDateString()})`);
-                if (name) onSaveStrategy({ type: 'DIAGNOSIS', name: name.trim(), diagnosis: { ...diagnosis } });
-              }} className="text-[10px] font-black text-indigo-600 bg-indigo-50 px-3 py-1.5 rounded-full">저장</button>
+              <button 
+                onClick={handleSaveDiagnosis}
+                className="flex items-center gap-1.5 text-[10px] font-black text-indigo-600 bg-indigo-50 px-4 py-2 rounded-full hover:bg-indigo-100 transition-all active:scale-95 shadow-sm"
+              >
+                <Save size={12} /> 저장
+              </button>
             </div>
             <div className="prose prose-slate prose-sm max-w-none text-slate-600 leading-relaxed pt-2">
               <ReactMarkdown>{diagnosis.currentDiagnosis}</ReactMarkdown>
@@ -218,11 +227,13 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({
                 <div className="flex items-center justify-between px-1">
                   <h3 className="font-black text-slate-800 text-lg flex items-center gap-2"><ShieldCheck size={20} className="text-indigo-600" />추천 실행 전략</h3>
                   <div className="flex gap-2">
-                    <button onClick={fetchStrategy} disabled={strategyLoading || !isStrategyChanged} className={`p-2 rounded-xl transition-all ${isStrategyChanged ? 'bg-amber-100 text-amber-600' : 'bg-slate-100 text-slate-400'}`} title="새로고침"><RefreshCw size={16} className={strategyLoading ? 'animate-spin' : ''} /></button>
-                    <button onClick={() => {
-                      const name = prompt("전략 리포트 저장명:", strategy.name || "통합 자산 전략");
-                      if (name) onSaveStrategy({ type: 'STRATEGY', name: name.trim(), diagnosis: diagnosis ? { ...diagnosis } : undefined, strategy: { ...strategy } });
-                    }} className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 text-white rounded-full text-[10px] font-black"><BookmarkCheck size={12} /> 저장</button>
+                    <button onClick={fetchStrategy} disabled={strategyLoading || !isStrategyChanged} className={`p-2 rounded-xl transition-all ${isStrategyChanged ? 'bg-amber-100 text-amber-600' : 'bg-slate-100 text-slate-400'}`} title="전략 재수립"><RefreshCw size={16} className={strategyLoading ? 'animate-spin' : ''} /></button>
+                    <button 
+                      onClick={handleSaveStrategy}
+                      className="flex items-center gap-1.5 px-4 py-2 bg-indigo-600 text-white rounded-full text-[10px] font-black hover:bg-indigo-700 active:scale-95 transition-all shadow-md"
+                    >
+                      <BookmarkCheck size={14} /> 보관함 저장
+                    </button>
                   </div>
                 </div>
 
@@ -283,7 +294,7 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({
           <div className="relative bg-white w-full max-w-md rounded-[2.5rem] shadow-2xl p-8 max-h-[80vh] overflow-y-auto no-scrollbar">
             <div className="flex justify-between items-center mb-6">
               <h3 className="text-xl font-black text-slate-800">전략 보관함</h3>
-              <button onClick={() => setIsSavedModalOpen(false)}><X size={20}/></button>
+              <button onClick={() => setIsSavedModalOpen(false)} className="p-2 bg-slate-50 rounded-full text-slate-400"><X size={20}/></button>
             </div>
             <div className="space-y-3">
               {savedStrategies.length === 0 ? (
@@ -291,12 +302,19 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({
               ) : (
                 savedStrategies.map(s => (
                   <div key={s.id} className="flex items-center gap-3 p-4 bg-slate-50 rounded-2xl border border-slate-100 hover:border-indigo-300 transition-all group">
-                    <button onClick={() => { if (s.diagnosis) setDiagnosis(s.diagnosis); if (s.strategy) setStrategy(s.strategy); setIsSavedModalOpen(false); }} className="flex-1 text-left">
+                    <button 
+                      onClick={() => { 
+                        if (s.diagnosis) setDiagnosis(s.diagnosis); 
+                        if (s.strategy) setStrategy(s.strategy); 
+                        setIsSavedModalOpen(false); 
+                      }} 
+                      className="flex-1 text-left"
+                    >
                       <p className="text-[10px] font-black text-indigo-600 uppercase mb-0.5">{s.type}</p>
                       <h4 className="text-sm font-black text-slate-800 truncate">{s.name}</h4>
                       <p className="text-[9px] font-bold text-slate-400">{new Date(s.createdAt).toLocaleString()}</p>
                     </button>
-                    <button onClick={() => onDeleteStrategy(s.id)} className="p-2 text-slate-300 hover:text-rose-500"><Trash2 size={16}/></button>
+                    <button onClick={() => onDeleteStrategy(s.id)} className="p-2 text-slate-300 hover:text-rose-500 transition-colors"><Trash2 size={16}/></button>
                   </div>
                 ))
               )}
@@ -392,7 +410,12 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({
                 <div className="space-y-6 animate-in fade-in slide-in-from-right-4">
                   <div className="w-12 h-12 bg-indigo-50 text-indigo-600 rounded-xl flex items-center justify-center"><MessageSquare size={24} /></div>
                   <h4 className="text-xl font-black text-slate-800 leading-tight">나만의 목표나 추가 요청이 있나요? (선택)</h4>
-                  <textarea value={wizardAnswers.customRequest} onChange={(e) => setWizardAnswers({...wizardAnswers, customRequest: e.target.value})} placeholder="예: 배당주 위주로 포트폴리오를 구성해줘..." className="w-full h-40 p-5 bg-slate-50 border border-slate-200 rounded-[1.5rem] text-sm font-bold text-slate-700 outline-none focus:border-indigo-500 focus:bg-white transition-all resize-none" />
+                  <textarea 
+                    value={wizardAnswers.customRequest} 
+                    onChange={(e) => setWizardAnswers({...wizardAnswers, customRequest: e.target.value})} 
+                    placeholder="예: 배당주 위주로 포트폴리오를 구성해줘..." 
+                    className="w-full h-40 p-5 bg-slate-50 border border-slate-200 rounded-[1.5rem] text-sm font-bold text-slate-700 outline-none focus:border-indigo-500 focus:bg-white transition-all resize-none shadow-inner" 
+                  />
                   <div className="flex flex-col gap-3 pt-2">
                     <button onClick={handleCompleteGoalWizard} className="w-full py-5 bg-indigo-600 text-white rounded-2xl font-black text-base shadow-xl active:scale-95 transition-all flex items-center justify-center gap-2"><CheckCircle2 size={20} /> 설정 완료</button>
                     <button onClick={() => setWizardStep(4)} className="flex items-center gap-1 text-xs font-black text-slate-400 justify-center"><ChevronLeft size={16} /> 이전으로</button>

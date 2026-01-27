@@ -97,6 +97,7 @@ const AnalyticsView: React.FC<AnalyticsViewProps> = ({ history, assets, exchange
         </div>
       </div>
 
+      {/* Fix: Wrap className string in quotes to resolve 'boolean' not assignable to 'string' error */}
       <div className="p-5 space-y-6">
         <section className={`rounded-[2.5rem] p-7 text-white shadow-xl relative overflow-hidden transition-colors duration-500 ${region === 'ALL' ? 'bg-indigo-600' : region === 'KRW' ? 'bg-blue-600' : 'bg-amber-600'}`}>
           <div className="relative z-10">
@@ -112,7 +113,7 @@ const AnalyticsView: React.FC<AnalyticsViewProps> = ({ history, assets, exchange
         <section className="bg-white rounded-[2.5rem] p-6 shadow-sm border border-slate-50">
           <div className="flex items-center justify-between mb-8"><h4 className="font-black text-slate-800 text-sm">포트폴리오 총액 추이</h4></div>
           <div className="h-48 w-full">
-            <ResponsiveContainer width="100%" height="100%" minWidth={0}>
+            <ResponsiveContainer width="100%" height="100%">
               <AreaChart data={chartData}>
                 <defs><linearGradient id="detailedColor" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#4F46E5" stopOpacity={0.15}/><stop offset="95%" stopColor="#4F46E5" stopOpacity={0}/></linearGradient></defs>
                 <XAxis dataKey="name" hide /><YAxis hide domain={['dataMin - 10000', 'dataMax + 10000']} /><Tooltip contentStyle={{ borderRadius: '1rem', border: 'none', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)', padding: '8px 12px' }} itemStyle={{ fontSize: '11px', fontWeight: '900', color: '#4F46E5' }} labelStyle={{ fontSize: '9px', color: '#94a3b8', fontWeight: 'bold' }} />
