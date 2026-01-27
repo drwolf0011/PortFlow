@@ -1,6 +1,6 @@
 
-import React, { useState } from 'react';
-import { X, Save, CreditCard, Sparkles, Loader2, Search, CheckCircle2, Building2 } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { X, Save, CreditCard, Sparkles, Loader2, Search, CheckCircle2, Building2, Landmark } from 'lucide-react';
 import { Asset, AssetType, Account, AccountType } from '../types';
 import { searchStockList, StockInfo } from '../services/geminiService';
 
@@ -16,6 +16,7 @@ const ManualAssetEntry: React.FC<ManualAssetEntryProps> = ({ onClose, onSave, as
   const [formData, setFormData] = useState<Partial<Asset>>({
     id: asset?.id || Math.random().toString(36).substr(2, 9),
     accountId: asset?.accountId || '',
+    managementType: asset?.managementType || AccountType.GENERAL,
     name: asset?.name || '',
     institution: asset?.institution || '',
     type: asset?.type || AssetType.STOCK,
@@ -29,33 +30,33 @@ const ManualAssetEntry: React.FC<ManualAssetEntryProps> = ({ onClose, onSave, as
   const [searchTerm, setSearchTerm] = useState(asset?.name || '');
   const [searchResults, setSearchResults] = useState<StockInfo[]>([]);
 
-  const selectedAccount = accounts.find(a => a.id === formData.accountId);
+  // 계좌 선택 시 계좌 유형을 자산관리유형으로 자동 연동
+  useEffect(() => {
+    if (formData.accountId) {
+      const selectedAcc = accounts.find(a => a.id === formData.accountId);
+      if (selectedAcc) {
+        setFormData(prev => ({ 
+          ...prev, 
+          managementType: selectedAcc.type,
+          institution: selectedAcc.institution 
+        }));
+      }
+    }
+  }, [formData.accountId, accounts]);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
     
-    if (name === 'accountId') {
-      const acc = accounts.find(a => a.id === value);
-      setFormData(prev => ({
-        ...prev,
-        accountId: value,
-        institution: acc ? acc.institution : prev.institution
-      }));
-      return;
-    }
-
-    if (name === 'name') {
-      setSearchTerm(value);
-      setFormData(prev => ({ ...prev, name: value }));
-      return;
-    }
-
     setFormData(prev => ({
       ...prev,
       [name]: name === 'quantity' || name === 'purchasePrice' || name === 'currentPrice' 
         ? parseFloat(value) || 0 
         : value
     }));
+
+    if (name === 'name') {
+      setSearchTerm(value);
+    }
   };
 
   const handleAISearch = async () => {
@@ -115,23 +116,34 @@ const ManualAssetEntry: React.FC<ManualAssetEntryProps> = ({ onClose, onSave, as
         </div>
         
         <form onSubmit={handleSave} className="p-6 space-y-5 overflow-y-auto no-scrollbar">
-          <div className="space-y-1.5">
-            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">연결 계좌</label>
-            <div className="relative">
-              <CreditCard className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300" size={16} />
-              <select name="accountId" value={formData.accountId} onChange={handleChange} className="w-full pl-11 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold outline-none appearance-none focus:border-indigo-500 focus:bg-white transition-all">
-                <option value="">계좌 선택 (선택 사항)</option>
-                {accounts.map(acc => <option key={acc.id} value={acc.id}>{acc.nickname} ({acc.institution})</option>)}
-              </select>
-            </div>
-            {selectedAccount && (
-              <div className={`mt-1 text-[10px] font-bold px-3 py-2 rounded-lg border flex items-center gap-2
-                ${selectedAccount.type === AccountType.IRP || selectedAccount.type === AccountType.DC ? 'bg-emerald-50 text-emerald-700 border-emerald-100' : 
-                  selectedAccount.type === AccountType.ISA ? 'bg-blue-50 text-blue-700 border-blue-100' : 'bg-slate-50 text-slate-500 border-slate-100'}`}>
-                <CheckCircle2 size={12} />
-                <span>선택된 계좌 유형: <strong>{selectedAccount.type}</strong></span>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">연결 계좌</label>
+              <div className="relative">
+                <CreditCard className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300" size={16} />
+                <select name="accountId" value={formData.accountId} onChange={handleChange} className="w-full pl-11 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold outline-none appearance-none focus:border-indigo-500 focus:bg-white transition-all">
+                  <option value="">미연결 (직접 입력)</option>
+                  {accounts.map(acc => <option key={acc.id} value={acc.id}>{acc.nickname} ({acc.institution})</option>)}
+                </select>
               </div>
-            )}
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-black text-indigo-600 uppercase tracking-widest ml-1">자산관리유형</label>
+              <div className="relative">
+                <Landmark className="absolute left-4 top-1/2 -translate-y-1/2 text-indigo-300" size={16} />
+                <select 
+                  name="managementType" 
+                  value={formData.managementType} 
+                  onChange={handleChange} 
+                  className="w-full pl-11 pr-4 py-4 bg-indigo-50 border border-indigo-100 rounded-xl text-sm font-black outline-none appearance-none focus:border-indigo-500 transition-all text-indigo-700"
+                >
+                  {Object.values(AccountType).map(type => (
+                    <option key={type} value={type}>{type}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
           </div>
           
           <div className="space-y-1.5">

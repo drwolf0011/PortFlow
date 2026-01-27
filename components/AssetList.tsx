@@ -1,10 +1,10 @@
 
 import React, { useState, useMemo } from 'react';
-import { Asset, AssetType, Account } from '../types';
+import { Asset, AssetType, Account, AccountType } from '../types';
 import { 
   Filter, Trash2, Edit3, Plus, RefreshCw, AlertCircle, 
   Globe, CreditCard, History, RotateCcw, Landmark, 
-  ChevronDown, X, Check, Calculator, TrendingUp, ArrowDownRight
+  ChevronDown, X, Check, Calculator, TrendingUp, ArrowDownRight, Tag
 } from 'lucide-react';
 /* Fix: Using wildcard import for react-router-dom to resolve named export errors */
 import * as ReactRouterDOM from 'react-router-dom';
@@ -53,6 +53,20 @@ const AssetList: React.FC<AssetListProps> = ({
   }, [filtered, exchangeRate]);
 
   const selectedAccount = accounts.find(acc => acc.id === selectedAccountId);
+
+  const getManagementTypeBadge = (type?: AccountType) => {
+    switch (type) {
+      case AccountType.IRP:
+      case AccountType.DC:
+        return 'bg-emerald-50 text-emerald-600 border-emerald-100';
+      case AccountType.PENSION:
+        return 'bg-amber-50 text-amber-600 border-amber-100';
+      case AccountType.ISA:
+        return 'bg-blue-50 text-blue-600 border-blue-100';
+      default:
+        return 'bg-slate-50 text-slate-600 border-slate-100';
+    }
+  };
 
   return (
     <div className="p-5 space-y-6 pb-40 animate-in fade-in duration-500">
@@ -184,7 +198,9 @@ const AssetList: React.FC<AssetListProps> = ({
                   </div>
                   <div>
                     <div className="flex items-center gap-2 mb-0.5">
-                      <p className="text-[10px] font-black text-slate-300 uppercase tracking-tighter">{asset.institution}</p>
+                      <span className={`px-2 py-0.5 border rounded text-[8px] font-black uppercase ${getManagementTypeBadge(asset.managementType)}`}>
+                        {asset.managementType || AccountType.GENERAL}
+                      </span>
                       {asset.currency === 'USD' && (
                         <span className="flex items-center gap-0.5 px-1.5 py-0.5 bg-amber-50 text-amber-600 rounded text-[8px] font-black uppercase">
                           <Globe size={8} /> USD
@@ -218,8 +234,8 @@ const AssetList: React.FC<AssetListProps> = ({
 
               <div className="mt-4 pt-3 border-t border-slate-50 flex items-center justify-between">
                 <div className="flex items-center gap-1.5 text-[9px] font-bold text-slate-300 uppercase tracking-tight">
-                  <div className="w-1.5 h-1.5 bg-slate-300 rounded-full"></div>
-                  Automatic Price Updates
+                  <Tag size={10} className="text-indigo-400" />
+                  {asset.type} • {asset.institution}
                 </div>
                 <Link 
                   to="/history" 

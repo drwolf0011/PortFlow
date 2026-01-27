@@ -20,7 +20,7 @@ import ManualTransactionEntry from './components/ManualTransactionEntry';
 import DeleteConfirmModal from './components/DeleteConfirmModal';
 import AuthScreen from './components/AuthScreen';
 import { EXCHANGE_RATE as DEFAULT_EXCHANGE_RATE } from './constants';
-import { Asset, Transaction, TransactionType, AssetType, Account, SyncConfig, AppData, SavedStrategy, RebalancingStrategy, UserProfile, DiagnosisResponse } from './types';
+import { Asset, Transaction, TransactionType, AssetType, Account, SyncConfig, AppData, SavedStrategy, RebalancingStrategy, UserProfile, DiagnosisResponse, AccountType } from './types';
 import { updateAssetPrices } from './services/geminiService';
 import { createBin, updateBin, readBin } from './services/storageService';
 
@@ -87,8 +87,8 @@ const AppContent: React.FC = () => {
         return parsed.map((s: any) => {
           if (s.strategy && !s.type) {
             return {
-              id: s.id,
-              createdAt: s.createdAt,
+              id: s.id || Date.now().toString() + Math.random().toString(36).substring(2, 5),
+              createdAt: s.createdAt || Date.now(),
               type: 'STRATEGY',
               name: s.strategy.name || '저장된 전략',
               strategy: s.strategy,
@@ -144,11 +144,13 @@ const AppContent: React.FC = () => {
       assetMetaMap[`${a.name}|${a.institution}|${a.accountId || 'none'}`] = a;
     });
 
+    const accountLookup = new Map<string, Account>(accounts.map(acc => [acc.id, acc]));
     const newAssets: Asset[] = [];
 
     Object.entries(groups).forEach(([key, groupTxs]) => {
       const meta = assetMetaMap[key];
       const [name, inst, accId] = key.split('|');
+      const linkedAccount = accId !== 'none' ? accountLookup.get(accId) : null;
 
       let totalQty = 0;
       let totalCostKRW = 0; 
@@ -185,13 +187,14 @@ const AppContent: React.FC = () => {
           purchasePriceKRW: totalCostKRW / totalQty,
           currentPrice: meta?.currentPrice || sortedTxs[sortedTxs.length - 1].price,
           currency: sortedTxs[0].currency,
-          accountId: accId === 'none' ? undefined : accId
+          accountId: accId === 'none' ? undefined : accId,
+          managementType: linkedAccount ? linkedAccount.type : (meta?.managementType || AccountType.GENERAL)
         });
       }
     });
 
     return newAssets;
-  }, [dynamicExchangeRate]);
+  }, [dynamicExchangeRate, accounts]);
 
   // --- Persistence ---
   useEffect(() => { 
@@ -222,8 +225,7 @@ const AppContent: React.FC = () => {
     diagnosis?: DiagnosisResponse, 
     strategy?: RebalancingStrategy 
   }) => {
-    // 저장 데이터 유효성 검사 강화
-    if (data.type === 'STRATEGY' && (!data.strategy || !data.strategy.executionGroups)) {
+    if (data.type === 'STRATEGY' && (!data.strategy)) {
       showToast("저장할 수 없는 전략 형식입니다.");
       return;
     }
@@ -232,9 +234,8 @@ const AppContent: React.FC = () => {
       return;
     }
     
-    // 데이터 안전 복제
     const newSaved: SavedStrategy = { 
-      id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
+      id: Date.now().toString() + Math.random().toString(36).substring(2, 7),
       createdAt: Date.now(), 
       type: data.type,
       name: data.name || (data.type === 'DIAGNOSIS' ? '자산 정밀 진단' : '통합 관리 전략'),
@@ -245,8 +246,8 @@ const AppContent: React.FC = () => {
     setSavedStrategies(prev => [newSaved, ...prev]);
     
     const msg = data.type === 'DIAGNOSIS' 
-      ? "진단 리포트가 저장되었습니다." 
-      : (data.diagnosis ? "통합 리포트(진단+전략)가 저장되었습니다." : "전략 리포트가 저장되었습니다.");
+      ? "진단 리포트가 보관함에 저장되었습니다." 
+      : (data.diagnosis ? "통합 리포트(진단+전략)가 보관함에 저장되었습니다." : "전략 리포트가 보관함에 저장되었습니다.");
     showToast(msg);
   }, [showToast]);
 

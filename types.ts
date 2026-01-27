@@ -48,6 +48,7 @@ export interface Transaction {
 export interface Asset {
   id: string;
   accountId?: string; 
+  managementType?: AccountType; // Added: 자산관리유형 (계좌유형 연동)
   name: string;
   ticker?: string;
   type: AssetType;
