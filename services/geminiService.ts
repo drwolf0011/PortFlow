@@ -21,7 +21,7 @@ interface CachedPrice {
   timestamp: number;
 }
 const PRICE_CACHE = new Map<string, CachedPrice>();
-const CACHE_TTL = 30 * 60 * 1000; // 캐시 유효 시간을 30분으로 연장
+const CACHE_TTL = 30 * 60 * 1000; 
 
 const safeJsonParse = (text: string) => {
   if (!text) return null;
@@ -64,10 +64,8 @@ const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 class RequestQueue {
   private queue: (() => Promise<void>)[] = [];
   private activeCount = 0;
-  // 무료 티어 안전을 위해 동시 실행을 1개로 제한
   private maxConcurrency = 1; 
   private lastRequestTime = 0;
-  // 요청 간 최소 간격을 2초로 늘려 안전성 확보
   private minInterval = 2000;
 
   async add<T>(task: () => Promise<T>): Promise<T> {
@@ -113,19 +111,16 @@ async function generateContentWithRetry(params: any, useQueue = true): Promise<G
   
   const apiCall = async () => {
     let lastError;
-    const maxRetries = 1; // 사용자의 요청에 따라 재시도 횟수를 1회로 변경
+    const maxRetries = 1; 
     for (let i = 0; i < maxRetries; i++) {
       try {
         return await ai.models.generateContent(params);
       } catch (error: any) {
         lastError = error;
-        // 429(Quota Exceeded) 에러 대응
         const status = error.status || error.code || (error.message?.includes('429') ? 429 : 0);
         
         if (status === 429 || error.message?.includes('quota')) {
-          // 지수 백오프: 5초, 10초, 20초, 40초... 점진적으로 대기 시간 증가
           const waitTime = (5000 * Math.pow(2, i)) + (Math.random() * 2000);
-          console.warn(`Gemini API Quota Exceeded. Retrying in ${Math.round(waitTime/1000)}s... (Attempt ${i+1}/${maxRetries})`);
           await delay(waitTime);
           continue;
         }
@@ -159,7 +154,6 @@ export const updateAssetPrices = async (assets: Asset[]): Promise<PriceUpdateRes
 
   const needUpdate = Array.from(uniqueItemsMap.entries());
   if (needUpdate.length > 0) {
-    // 한 번에 최대 15개까지 묶어서 호출 (호출 횟수 최소화)
     const itemChunks = [];
     for (let i = 0; i < needUpdate.length; i += 15) {
       itemChunks.push(needUpdate.slice(i, i + 15));
@@ -177,7 +171,7 @@ export const updateAssetPrices = async (assets: Asset[]): Promise<PriceUpdateRes
       
       try {
         const response = await generateContentWithRetry({
-          model: 'gemini-3-flash-preview', // 가격 업데이트는 비용이 저렴한 Flash 모델 사용
+          model: 'gemini-3-flash-preview',
           contents: prompt,
           config: {
             tools: [{ googleSearch: {} }],
@@ -242,8 +236,8 @@ export const generateGoalPrompt = async (answers: any): Promise<{ goal: string, 
     - 추가 요청 사항: ${answers.customRequest || "없음"}
     
     [작업 지침]:
-    1. 'goal': 사용자의 정보를 관통하는 핵심 투자 목표를 10자 내외의 한국어 구절로 작성하십시오 (예: 노후 대비 안정 성장형).
-    2. 'prompt': AI가 향후 이 사용자의 포트폴리오를 진단할 때 기준점으로 삼을 수 있는 구체적인 가이드라인을 작성하십시오. 특히 '추가 요청 사항'이 있다면 이를 최우선적으로 반영하여 지침을 구체화하십시오.
+    1. 'goal': 핵심 투자 목표를 10자 내외의 한국어 구절로 작성.
+    2. 'prompt': 향후 진단 기준이 될 가이드라인. 특히 ISA, IRP 등 한국 특유의 절세 계좌 활용법을 고려하여 지침을 구체화하십시오.
     
     [출력]: JSON 형식 { "goal": "...", "prompt": "..." }
   `;
@@ -280,20 +274,24 @@ export const getAIDiagnosis = async (
   exchangeRate: number,
   userProfile: UserProfile | null
 ): Promise<DiagnosisResponse> => {
-  const assetSummary = assets.map(a => `${a.institution} | ${a.type} | ${a.name}: ${a.quantity}주, 평가액 ${(a.currentPrice * a.quantity * (a.currency === 'USD' ? exchangeRate : 1)).toLocaleString()}원`).join('\n');
+  // 자산관리유형(ISA, IRP 등)을 포함한 상세 데이터 구성
+  const assetSummary = assets.map(a => 
+    `- [${a.managementType || '일반'}] ${a.institution} | ${a.type} | ${a.name}: ${a.quantity}주, 평가액 ${(a.currentPrice * a.quantity * (a.currency === 'USD' ? exchangeRate : 1)).toLocaleString()}원`
+  ).join('\n');
+
   const prompt = `
     대한민국 상위 1%를 담당하는 자산관리 전문가(PB)로서 아래 포트폴리오를 정밀 진단하십시오.
-    이 진단은 후속 리밸런싱 전략의 기초 데이터로 사용됩니다.
+    각 자산이 담긴 **계좌유형(ISA, IRP, 개인연금 등)**의 법적/세제적 특성을 반드시 반영해야 합니다.
 
     ${userProfile?.goalPrompt ? `[사용자 투자 원칙 및 요청 사항]: ${userProfile.goalPrompt}` : ""}
     
     [자산 포트폴리오 현황]:
     ${assetSummary}
     
-    [분석 요구사항]:
-    1. 자산 배분 상태, 특정 종목/섹터 편중 리스크, 환율 노출도 등을 팩트 기반으로 분석하십시오.
-    2. 현재 포트폴리오의 가장 치명적인 약점이나 개선이 시급한 '핵심 문제점'을 구체적으로 지적하십시오.
-    3. 최근 글로벌 거시 경제 및 시장 상황과 연결하여 이 포트폴리오의 취약점을 설명하십시오.
+    [중점 분석 요구사항]:
+    1. **계좌별 규제 준수**: 특히 IRP/DC형 계좌의 경우, 주식형 자산 비중이 법적 한도(70%)를 초과했는지 확인하십시오.
+    2. **세제 효율성(Asset Location)**: ISA나 연금계좌에 담기에 부적절한 자산(예: 국내주식은 일반계좌도 비과세이므로 ISA 공간 낭비일 수 있음)이 있는지 분석하십시오.
+    3. **리스크 분석**: 자산 배분 상태, 섹터 편중 리스크, 환율 노출도.
     
     [출력 형식]:
     - JSON { "currentDiagnosis": "...", "marketConditions": "..." }
@@ -303,7 +301,7 @@ export const getAIDiagnosis = async (
 
   try {
     const response = await generateContentWithRetry({
-      model: 'gemini-3-pro-preview', // 진단은 고성능 Pro 모델 사용
+      model: 'gemini-3-pro-preview', 
       contents: prompt,
       config: { 
         tools: [{ googleSearch: {} }],
@@ -339,38 +337,26 @@ export const getAIStrategy = async (
   userProfile: UserProfile | null
 ): Promise<RebalancingStrategy> => {
   const rawAssetData = assets.map(a => 
-    `- ${a.name}(${a.ticker || 'N/A'}): ${a.quantity}주 보유, 평단 ${a.purchasePrice} ${a.currency}, 현재가 ${a.currentPrice} ${a.currency} (${a.institution})`
+    `- [${a.managementType || '일반'}] ${a.name}(${a.ticker || 'N/A'}): ${a.quantity}주 보유, 현재가 ${a.currentPrice} ${a.currency} (${a.institution})`
   ).join('\n');
 
   const prompt = `
     당신은 수석 자산관리 전문가(PB)입니다. 
-    앞서 수행된 [1단계 진단 결과]를 해결하기 위한 [2단계 리밸런싱 전략]을 수립하고, 이를 실행할 [3단계 구체적 매매 계획]을 작성하십시오.
+    앞서 수행된 [진단 결과]를 바탕으로, 각 **계좌유형별 특성**을 고려한 리밸런싱 전략을 수립하십시오.
     
-    [1단계: 진단 결과 참조]
-    "${diagnosis}"
+    [진단 결과]: "${diagnosis}"
     
-    [사용자 프로필]
-    투자 목표: ${userProfile?.investmentGoal || "자산 증식 및 리스크 관리"}
-    ${userProfile?.goalPrompt ? `세부 지침 및 요청 사항: ${userProfile.goalPrompt}` : ""}
+    [사용자 프로필]: ${userProfile?.investmentGoal || "자산 증식"}
+    [보유 자산]: ${rawAssetData}
 
-    [보유 자산 데이터]
-    ${rawAssetData}
-    환율: 1 USD = ${exchangeRate} KRW
+    [전략 수립 지침]:
+    1. **IRP/DC 계좌**: 위험자산 비중이 70%를 넘지 않도록 안전자산(TDF, 채권 등) 편입 비중을 정확히 계산하여 제안하십시오.
+    2. **ISA 계좌**: 비과세 및 저율과세 혜택을 위해 배당주, 해외 주식형 ETF(국내상장) 위주로 재편하십시오.
+    3. **일반 계좌**: 세제 혜택이 적으므로 직접 투자나 절세가 필요 없는 우량주 위주로 배치하십시오.
+    4. **실행 계획**: 반드시 [보유 자산]에 있는 종목을 매도하거나, 새로운 유망 종목을 매수하는 구체적 계획을 생성하십시오.
 
-    [작업 지시사항]:
-    1. **일관성 필수 (Consistency Check)**: 
-       - 상단의 전략 설명(description)과 하단의 구체적 실행 계획(executionGroups)은 완벽히 일치해야 합니다. 설명에는 "매도"한다고 하고 계획에 없으면 안 됩니다.
-    2. **데이터 무결성 (Integrity)**:
-       - **매도(SELL)**: 반드시 [보유 자산 데이터]에 존재하는 종목만 매도할 수 있습니다. (없는 종목 매도 금지)
-       - **매수(BUY)**: 진단된 문제(예: 특정 섹터 부족)를 해결하는 구체적 종목(ETF 포함)을 제안하십시오.
-       - 수량 및 금액 계산: 수량 * 현재가 = 총액.
-    3. **연결성**: 각 실행 아이템(매수/매도)의 'reason' 필드에, 이것이 진단 결과의 어떤 문제를 해결하기 위함인지 한국어로 명확히 적으십시오.
-
-    [JSON 응답 스키마 준수 (한국어 작성)]:
-    - name: 전략 이름 (예: 리스크 분산형 성장 전략)
-    - description: 전략 개요 (한국어)
-    - rationale: 이 전략을 선택한 논리적 이유
-    - executionGroups: 계좌별 실행 그룹 리스트
+    [JSON 응답 스키마]:
+    - executionGroups: 계좌별/관리유형별로 그룹화하여 실행 단계 작성.
   `;
 
   try {
@@ -379,7 +365,6 @@ export const getAIStrategy = async (
       contents: prompt,
       config: { 
         responseMimeType: "application/json",
-        // CRITICAL FIX: Increased maxOutputTokens to 8192 to prevent JSON truncation
         maxOutputTokens: 8192,
         thinkingConfig: { thinkingBudget: 1024 },
         responseSchema: {
