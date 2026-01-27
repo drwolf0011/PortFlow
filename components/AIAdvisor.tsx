@@ -1,14 +1,14 @@
 
-import React, { useState, useMemo, useRef } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { getAIDiagnosis, getAIStrategy, generateGoalPrompt } from '../services/geminiService';
-import { Asset, RebalancingStrategy, Account, UserProfile, DiagnosisResponse } from '../types';
+import { Asset, RebalancingStrategy, Account, UserProfile, DiagnosisResponse, SavedStrategy } from '../types';
 import { 
   Sparkles, Loader2, Target, Activity, Zap, Briefcase, 
   ArrowRight, Lightbulb, ShieldCheck, Wallet,
-  Settings2, X, PlayCircle, 
+  Settings2, X, PlayCircle, Save,
   CheckCircle2, ChevronRight, ChevronLeft, MessageSquare,
-  RefreshCw, Layers, Coins, Hourglass, Heart
+  RefreshCw, Layers, Coins, Hourglass, Heart, Archive, Trash2
 } from 'lucide-react';
 
 interface AIAdvisorProps {
@@ -18,16 +18,21 @@ interface AIAdvisorProps {
   exchangeRate: number;
   user: UserProfile | null;
   onUpdateUser: (updatedUser: UserProfile) => void;
+  savedStrategies: SavedStrategy[];
+  onSaveStrategy: (data: { type: 'DIAGNOSIS' | 'STRATEGY', name: string, diagnosis?: DiagnosisResponse, strategy?: RebalancingStrategy }) => void;
+  onDeleteStrategy: (id: string) => void;
 }
 
 const AIAdvisor: React.FC<AIAdvisorProps> = ({ 
   assets, accounts, onApplyRebalancing, exchangeRate, 
-  user, onUpdateUser
+  user, onUpdateUser, savedStrategies, onSaveStrategy, onDeleteStrategy
 }) => {
   const [diagnosis, setDiagnosis] = useState<DiagnosisResponse | null>(null);
   const [strategy, setStrategy] = useState<RebalancingStrategy | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
   const [strategyLoading, setStrategyLoading] = useState<boolean>(false);
+  const [isArchiveOpen, setIsArchiveOpen] = useState(false);
+  const [isSavedThisSession, setIsSavedThisSession] = useState(false);
   
   const contextHash = useMemo(() => {
     const assetsKey = assets.map(a => `${a.id}-${a.quantity}-${a.currentPrice}`).join('|');
@@ -47,6 +52,7 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({
     setLoading(true);
     setDiagnosis(null);
     setStrategy(null);
+    setIsSavedThisSession(false);
     try {
       const result = await getAIDiagnosis(assets, accounts, exchangeRate, user);
       setDiagnosis(result);
@@ -71,6 +77,7 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({
       const result = await getAIStrategy(assets, accounts, exchangeRate, diagnosis.currentDiagnosis, user);
       setStrategy(result);
       lastStrategyHash.current = contextHash;
+      setIsSavedThisSession(false);
     } catch (err: any) {
       const isQuota = err.message?.includes('429') || err.message?.includes('quota');
       alert(isQuota ? "전략 수립 할당량이 초과되었습니다." : (err.message || "전략 생성 중 오류 발생"));
@@ -81,6 +88,37 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({
 
   const isDataChanged = lastAnalyzedHash.current !== contextHash;
   const isStrategyChanged = lastStrategyHash.current !== contextHash;
+
+  const handleSave = () => {
+    if (!diagnosis) return;
+    const defaultName = `${strategy ? '전략' : '진단'}_${new Date().toLocaleDateString('ko-KR', { month: 'numeric', day: 'numeric' })}_${new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', hour12: false })}`;
+    const name = window.prompt("저장할 기록의 이름을 입력하세요:", defaultName);
+    if (!name) return;
+
+    onSaveStrategy({
+      type: strategy ? 'STRATEGY' : 'DIAGNOSIS',
+      name,
+      diagnosis: diagnosis,
+      strategy: strategy || undefined
+    });
+    setIsSavedThisSession(true);
+  };
+
+  const handleLoadSaved = (item: SavedStrategy) => {
+    // 묶음 데이터 전체 복구
+    if (item.diagnosis) setDiagnosis(item.diagnosis);
+    if (item.strategy) setStrategy(item.strategy);
+    else setStrategy(null);
+
+    // 불러온 데이터가 현재 자산 상태와 일치한다고 가정하고 해시 동기화
+    // (만약 자산이 바뀌었다면 contextHash가 달라지므로 자연스럽게 '데이터 변경' 감지 가능)
+    lastAnalyzedHash.current = contextHash;
+    if (item.strategy) lastStrategyHash.current = contextHash;
+    
+    setIsArchiveOpen(false);
+    setIsSavedThisSession(true);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
 
   const [isGoalWizardOpen, setIsGoalWizardOpen] = useState(false);
   const [wizardStep, setWizardStep] = useState(0);
@@ -118,6 +156,12 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({
       <div className="flex flex-col gap-4 px-1">
          <div className="flex items-center justify-between">
            <h2 className="text-xl font-black text-slate-800 tracking-tight">AI 자산관리자</h2>
+           <button 
+            onClick={() => setIsArchiveOpen(true)}
+            className="flex items-center gap-2 px-4 py-2.5 bg-white text-indigo-600 border border-indigo-100 rounded-2xl text-[11px] font-black shadow-sm active:scale-95 transition-all hover:bg-indigo-50"
+           >
+             <Archive size={14} /> 보관함 {savedStrategies.length > 0 && `(${savedStrategies.length})`}
+           </button>
          </div>
 
          <div className="bg-white p-5 rounded-[2rem] border border-slate-100 shadow-sm flex items-center justify-between">
@@ -165,6 +209,14 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({
                 <div className="p-2.5 bg-indigo-50 text-indigo-600 rounded-xl"><Activity size={20} /></div>
                 <h4 className="text-sm font-black text-slate-800 uppercase tracking-tight">정밀 진단 리포트</h4>
               </div>
+              <button 
+                onClick={handleSave}
+                disabled={isSavedThisSession && !strategy}
+                className={`p-2.5 rounded-xl transition-all ${isSavedThisSession && !strategy ? 'bg-emerald-50 text-emerald-500' : 'text-slate-400 hover:text-indigo-600 hover:bg-indigo-50'}`}
+                title="진단 결과 저장"
+              >
+                {isSavedThisSession && !strategy ? <CheckCircle2 size={20} /> : <Save size={20} />}
+              </button>
             </div>
             <div className="prose prose-slate prose-sm max-w-none text-slate-600 leading-relaxed pt-2">
               <ReactMarkdown>{diagnosis.currentDiagnosis}</ReactMarkdown>
@@ -193,6 +245,14 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({
                 <div className="flex items-center justify-between px-1">
                   <h3 className="font-black text-slate-800 text-lg flex items-center gap-2"><ShieldCheck size={20} className="text-indigo-600" />추천 실행 전략</h3>
                   <div className="flex gap-2">
+                    <button 
+                      onClick={handleSave} 
+                      disabled={isSavedThisSession}
+                      className={`p-2 rounded-xl transition-all ${isSavedThisSession ? 'bg-emerald-50 text-emerald-500' : 'bg-indigo-50 text-indigo-600 hover:bg-indigo-100'}`} 
+                      title="전체 전략 저장"
+                    >
+                      {isSavedThisSession ? <CheckCircle2 size={16} /> : <Save size={16} />}
+                    </button>
                     <button onClick={fetchStrategy} disabled={strategyLoading || !isStrategyChanged} className={`p-2 rounded-xl transition-all ${isStrategyChanged ? 'bg-amber-100 text-amber-600' : 'bg-slate-100 text-slate-400'}`} title="전략 재수립"><RefreshCw size={16} className={strategyLoading ? 'animate-spin' : ''} /></button>
                   </div>
                 </div>
@@ -247,7 +307,62 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({
         </div>
       )}
 
-      {/* Goal Wizard */}
+      {/* Archive Bottom Sheet */}
+      {isArchiveOpen && (
+        <div className="fixed inset-0 z-[300] flex items-end justify-center p-0">
+          <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm animate-in fade-in" onClick={() => setIsArchiveOpen(false)}></div>
+          <div className="relative bg-white w-full max-w-lg rounded-t-[2.5rem] shadow-2xl overflow-hidden animate-in slide-in-from-bottom duration-300 flex flex-col max-h-[85dvh]">
+            <div className="px-8 pt-8 pb-4 flex justify-between items-center bg-white border-b border-slate-100 shrink-0">
+              <div>
+                <h3 className="text-xl font-black text-slate-800">전략 보관함</h3>
+                <p className="text-[10px] font-black text-indigo-600 uppercase tracking-widest mt-0.5">Saved AI Reports</p>
+              </div>
+              <button onClick={() => setIsArchiveOpen(false)} className="p-2 bg-slate-50 rounded-full text-slate-400"><X size={20}/></button>
+            </div>
+            <div className="p-6 overflow-y-auto no-scrollbar flex-1 space-y-3">
+              {savedStrategies.length === 0 ? (
+                <div className="py-20 text-center space-y-4 opacity-30">
+                  <Archive size={48} className="mx-auto" />
+                  <p className="text-sm font-black">저장된 기록이 없습니다.</p>
+                </div>
+              ) : (
+                savedStrategies.map(item => (
+                  <div key={item.id} className="group flex items-stretch gap-2">
+                    <button 
+                      onClick={() => handleLoadSaved(item)}
+                      className="flex-1 p-5 bg-slate-50 border border-slate-100 rounded-2xl text-left hover:border-indigo-600 hover:bg-white transition-all group"
+                    >
+                      <div className="flex items-center justify-between mb-2">
+                        <span className={`text-[9px] font-black px-2 py-0.5 rounded-md border ${item.strategy ? 'text-indigo-600 bg-indigo-50 border-indigo-100' : 'text-emerald-600 bg-emerald-50 border-emerald-100'}`}>
+                          {item.strategy ? '전체 전략 묶음' : '진단 결과 묶음'}
+                        </span>
+                        <span className="text-[10px] font-bold text-slate-400">
+                          {new Date(item.createdAt).toLocaleDateString()}
+                        </span>
+                      </div>
+                      <h5 className="text-sm font-black text-slate-800 group-hover:text-indigo-600 transition-colors">{item.name}</h5>
+                      <p className="text-[11px] font-medium text-slate-500 mt-1 line-clamp-2">
+                        {item.strategy ? `기대수익: +${item.strategy.predictedReturnRate}% • ${item.strategy.description}` : item.diagnosis?.marketConditions}
+                      </p>
+                    </button>
+                    <button 
+                      onClick={() => { if(window.confirm('삭제하시겠습니까?')) onDeleteStrategy(item.id); }}
+                      className="p-4 bg-slate-50 text-slate-300 hover:text-rose-500 hover:bg-rose-50 rounded-2xl border border-slate-100 hover:border-rose-100 transition-all active:scale-95"
+                    >
+                      <Trash2 size={18} />
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+            <div className="p-6 bg-slate-50 shrink-0 pb-safe">
+              <button onClick={() => setIsArchiveOpen(false)} className="w-full py-4 bg-slate-900 text-white rounded-2xl font-black text-sm active:scale-95 transition-all">닫기</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Goal Wizard (이전과 동일) */}
       {isGoalWizardOpen && (
         <div className="fixed inset-0 z-[300] flex items-end sm:items-center justify-center p-0 sm:p-4">
           <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm animate-in fade-in" onClick={() => setIsGoalWizardOpen(false)}></div>

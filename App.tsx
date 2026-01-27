@@ -20,7 +20,7 @@ import ManualTransactionEntry from './components/ManualTransactionEntry';
 import DeleteConfirmModal from './components/DeleteConfirmModal';
 import AuthScreen from './components/AuthScreen';
 import { EXCHANGE_RATE as DEFAULT_EXCHANGE_RATE, CLOUD_MASTER_KEY } from './constants';
-import { Asset, Transaction, TransactionType, AssetType, Account, SyncConfig, AppData, RebalancingStrategy, UserProfile, DiagnosisResponse } from './types';
+import { Asset, Transaction, TransactionType, AssetType, Account, SyncConfig, AppData, RebalancingStrategy, UserProfile, DiagnosisResponse, SavedStrategy } from './types';
 import { updateAssetPrices } from './services/geminiService';
 import { createBin, updateBin, readBin, fetchUsersRegistry, updateUsersRegistry } from './services/storageService';
 
@@ -80,6 +80,12 @@ const AppContent: React.FC = () => {
     return saved ? parseFloat(saved) : DEFAULT_EXCHANGE_RATE;
   });
   const [lastUpdated, setLastUpdated] = useState<string>(() => localStorage.getItem('portflow_last_updated') || '-');
+  const [savedStrategies, setSavedStrategies] = useState<SavedStrategy[]>(() => {
+    try {
+      const saved = localStorage.getItem('portflow_saved_strategies');
+      return saved ? JSON.parse(saved) : [];
+    } catch (e) { return []; }
+  });
 
   const [syncConfig, setSyncConfig] = useState<SyncConfig>(() => {
     try {
@@ -190,14 +196,19 @@ const AppContent: React.FC = () => {
   useEffect(() => { localStorage.setItem('portflow_user', JSON.stringify(user)); }, [user]);
   useEffect(() => { localStorage.setItem('portflow_exchange_rate', dynamicExchangeRate.toString()); }, [dynamicExchangeRate]);
   useEffect(() => { localStorage.setItem('portflow_last_updated', lastUpdated); }, [lastUpdated]);
+  useEffect(() => { 
+    localStorage.setItem('portflow_saved_strategies', JSON.stringify(savedStrategies));
+    setLocalUpdateTimestamp(Date.now());
+  }, [savedStrategies]);
 
   const getCurrentAppData = useCallback((): AppData => {
     return {
       assets, transactions, accounts, user, history, lastUpdated, 
       exchangeRate: dynamicExchangeRate, 
-      timestamp: localUpdateTimestamp
+      timestamp: localUpdateTimestamp,
+      savedStrategies
     };
-  }, [assets, transactions, accounts, user, history, lastUpdated, dynamicExchangeRate, localUpdateTimestamp]);
+  }, [assets, transactions, accounts, user, history, lastUpdated, dynamicExchangeRate, localUpdateTimestamp, savedStrategies]);
 
   const applyAppData = useCallback((data: AppData) => {
     if (!data) return;
@@ -208,6 +219,12 @@ const AppContent: React.FC = () => {
     setAssets(syncedAssets);
     if (Array.isArray(data.accounts)) setAccounts([...data.accounts]);
     if (Array.isArray(data.history)) setHistory([...data.history]);
+    
+    // 보관함 데이터 복구 로직 강화
+    const incomingStrategies = Array.isArray(data.savedStrategies) ? data.savedStrategies : [];
+    setSavedStrategies(incomingStrategies);
+    localStorage.setItem('portflow_saved_strategies', JSON.stringify(incomingStrategies));
+
     if (data.user) setUser({ ...data.user });
     if (data.lastUpdated) setLastUpdated(data.lastUpdated);
     if (data.exchangeRate) setDynamicExchangeRate(data.exchangeRate);
@@ -525,6 +542,29 @@ const AppContent: React.FC = () => {
     }
   };
 
+  const handleSaveAIStrategy = useCallback((data: { 
+    type: 'DIAGNOSIS' | 'STRATEGY', 
+    name: string, 
+    diagnosis?: DiagnosisResponse, 
+    strategy?: RebalancingStrategy 
+  }) => {
+    const newSaved: SavedStrategy = { 
+      id: Date.now().toString() + Math.random().toString(36).substr(2, 5),
+      createdAt: Date.now(), 
+      name: data.name,
+      diagnosis: data.diagnosis, 
+      strategy: data.strategy
+    };
+    
+    setSavedStrategies(prev => [newSaved, ...prev]);
+    showToast("전략 보관함에 저장되었습니다.");
+  }, [showToast]);
+
+  const handleDeleteAIStrategy = useCallback((id: string) => {
+    setSavedStrategies(prev => prev.filter(s => s.id !== id));
+    showToast("보관함에서 삭제되었습니다.");
+  }, [showToast]);
+
   if (!isAuthenticated) return <AuthScreen onLoginSuccess={handleLoginSuccess} />;
 
   return (
@@ -540,7 +580,7 @@ const AppContent: React.FC = () => {
         <Routes>
           <Route path="/" element={<Dashboard assets={assets} accounts={accounts} transactions={transactions} user={user} onRefresh={handleUpdatePrices} isUpdating={isUpdatingPrices} lastUpdated={lastUpdated} history={history} exchangeRate={dynamicExchangeRate} />} />
           <Route path="/assets" element={<AssetList assets={assets} setAssets={setAssets} onAddAsset={() => { setEditingAsset(undefined); setIsManualModalOpen(true); }} onEditAsset={(a) => { setEditingAsset(a); setIsManualModalOpen(true); }} onDeleteAsset={handleDeleteAsset} onSync={handleLocalSync} onRefreshPrices={handleUpdatePrices} isRefreshing={isUpdatingPrices} exchangeRate={dynamicExchangeRate} accounts={accounts} />} />
-          <Route path="/advisor" element={<AIAdvisor assets={assets} accounts={accounts} onApplyRebalancing={(inst) => showToast(`${inst} 리밸런싱 시뮬레이션 전송`)} exchangeRate={dynamicExchangeRate} user={user} onUpdateUser={handleUpdateUser} />} />
+          <Route path="/advisor" element={<AIAdvisor assets={assets} accounts={accounts} onApplyRebalancing={(inst) => showToast(`${inst} 리밸런싱 시뮬레이션 전송`)} exchangeRate={dynamicExchangeRate} user={user} onUpdateUser={handleUpdateUser} savedStrategies={savedStrategies} onSaveStrategy={handleSaveAIStrategy} onDeleteStrategy={handleDeleteAIStrategy} />} />
           <Route path="/history" element={<TransactionHistory transactions={transactions} accounts={accounts} onDelete={handleDeleteTransaction} onEdit={(tx) => { setEditingTransaction(tx); setIsTransactionModalOpen(true); }} onUpdate={handleUpdateTransactions} exchangeRate={dynamicExchangeRate} />} />
           <Route path="/analytics" element={<AnalyticsView history={history} assets={assets} exchangeRate={dynamicExchangeRate} />} />
           <Route path="/accounts" element={<AccountManager accounts={accounts} setAccounts={setAccounts} assets={assets} exchangeRate={dynamicExchangeRate} />} />

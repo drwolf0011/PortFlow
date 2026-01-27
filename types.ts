@@ -73,6 +73,10 @@ export interface UserProfile {
   dataBinId: string; // 개인 데이터 저장소 ID
   investmentGoal?: string;
   goalPrompt?: string;
+  cloudSync?: {
+    apiKey: string;
+    binId: string;
+  };
 }
 
 // 중앙 사용자 디렉토리 저장 구조
@@ -114,6 +118,14 @@ export interface RebalancingStrategy {
   executionGroups: ExecutionGroup[]; 
 }
 
+export interface SavedStrategy {
+  id: string;
+  createdAt: number;
+  name: string;
+  diagnosis?: DiagnosisResponse;
+  strategy?: RebalancingStrategy;
+}
+
 export interface SyncConfig {
   apiKey: string;
   binId: string;
@@ -131,4 +143,5 @@ export interface AppData {
   lastUpdated: string;
   exchangeRate: number;
   timestamp: number;
+  savedStrategies?: SavedStrategy[];
 }
