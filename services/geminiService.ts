@@ -21,7 +21,7 @@ interface CachedPrice {
   timestamp: number;
 }
 const PRICE_CACHE = new Map<string, CachedPrice>();
-const CACHE_TTL = 30 * 60 * 1000; 
+const CACHE_TTL = 60 * 60 * 1000; 
 
 const safeJsonParse = (text: string) => {
   if (!text) return null;
@@ -66,7 +66,7 @@ class RequestQueue {
   private activeCount = 0;
   private maxConcurrency = 1; 
   private lastRequestTime = 0;
-  private minInterval = 2000;
+  private minInterval = 3000; 
 
   async add<T>(task: () => Promise<T>): Promise<T> {
     return new Promise((resolve, reject) => {
@@ -107,26 +107,29 @@ class RequestQueue {
 export const globalRequestQueue = new RequestQueue();
 
 async function generateContentWithRetry(params: any, useQueue = true): Promise<GenerateContentResponse> {
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-  
   const apiCall = async () => {
     let lastError;
-    const maxRetries = 1; 
+    const maxRetries = 3; 
     for (let i = 0; i < maxRetries; i++) {
+      // API Key가 갱신될 수 있으므로 매번 새로 인스턴스화
+      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       try {
         return await ai.models.generateContent(params);
       } catch (error: any) {
         lastError = error;
         const status = error.status || error.code || (error.message?.includes('429') ? 429 : 0);
         
+        // 429 에러는 지수 백오프로 재시도
         if (status === 429 || error.message?.includes('quota')) {
-          const waitTime = (5000 * Math.pow(2, i)) + (Math.random() * 2000);
+          const waitTime = (5000 * Math.pow(2.2, i)) + (Math.random() * 2000);
+          console.warn(`[Gemini API] Quota exceeded. Retrying in ${Math.round(waitTime/1000)}s...`);
           await delay(waitTime);
           continue;
         }
         throw error;
       }
     }
+    // 재시도 끝에 실패하면 마지막 에러 전달
     throw lastError;
   };
   
@@ -264,7 +267,7 @@ export const generateGoalPrompt = async (answers: any): Promise<{ goal: string, 
       prompt: parsed?.prompt || "분산 투자를 권장합니다." 
     };
   } catch (error) { 
-    return { goal: "목표 설정 필요", prompt: "기본 전략을 적용합니다." }; 
+    throw error;
   }
 };
 
@@ -274,7 +277,6 @@ export const getAIDiagnosis = async (
   exchangeRate: number,
   userProfile: UserProfile | null
 ): Promise<DiagnosisResponse> => {
-  // 자산관리유형(ISA, IRP 등)을 포함한 상세 데이터 구성
   const assetSummary = assets.map(a => 
     `- [${a.managementType || '일반'}] ${a.institution} | ${a.type} | ${a.name}: ${a.quantity}주, 평가액 ${(a.currentPrice * a.quantity * (a.currency === 'USD' ? exchangeRate : 1)).toLocaleString()}원`
   ).join('\n');
@@ -290,7 +292,7 @@ export const getAIDiagnosis = async (
     
     [중점 분석 요구사항]:
     1. **계좌별 규제 준수**: 특히 IRP/DC형 계좌의 경우, 주식형 자산 비중이 법적 한도(70%)를 초과했는지 확인하십시오.
-    2. **세제 효율성(Asset Location)**: ISA나 연금계좌에 담기에 부적절한 자산(예: 국내주식은 일반계좌도 비과세이므로 ISA 공간 낭비일 수 있음)이 있는지 분석하십시오.
+    2. **세제 효율성(Asset Location)**: ISA나 연금계좌에 담기에 부적절한 자산이 있는지 분석하십시오.
     3. **리스크 분석**: 자산 배분 상태, 섹터 편중 리스크, 환율 노출도.
     
     [출력 형식]:
@@ -317,14 +319,10 @@ export const getAIDiagnosis = async (
       }
     });
     const parsed = safeJsonParse(response.text);
-    const sources: { title: string; uri: string }[] = [];
-    response.candidates?.[0]?.groundingMetadata?.groundingChunks?.forEach((c: any) => { 
-      if (c.web) sources.push({ title: c.web.title, uri: c.web.uri }); 
-    });
     return { 
       currentDiagnosis: parsed?.currentDiagnosis || "진단 생성 실패",
       marketConditions: parsed?.marketConditions || "정보 없음",
-      sources 
+      sources: [] 
     };
   } catch (error) { throw error; }
 };
@@ -350,10 +348,9 @@ export const getAIStrategy = async (
     [보유 자산]: ${rawAssetData}
 
     [전략 수립 지침]:
-    1. **IRP/DC 계좌**: 위험자산 비중이 70%를 넘지 않도록 안전자산(TDF, 채권 등) 편입 비중을 정확히 계산하여 제안하십시오.
+    1. **IRP/DC 계좌**: 위험자산 비중이 70%를 넘지 않도록 안전자산 편입 비중을 정확히 계산하여 제안하십시오.
     2. **ISA 계좌**: 비과세 및 저율과세 혜택을 위해 배당주, 해외 주식형 ETF(국내상장) 위주로 재편하십시오.
-    3. **일반 계좌**: 세제 혜택이 적으므로 직접 투자나 절세가 필요 없는 우량주 위주로 배치하십시오.
-    4. **실행 계획**: 반드시 [보유 자산]에 있는 종목을 매도하거나, 새로운 유망 종목을 매수하는 구체적 계획을 생성하십시오.
+    3. **일반 계좌**: 직접 투자나 우량주 위주로 배치하십시오.
 
     [JSON 응답 스키마]:
     - executionGroups: 계좌별/관리유형별로 그룹화하여 실행 단계 작성.
@@ -366,7 +363,7 @@ export const getAIStrategy = async (
       config: { 
         responseMimeType: "application/json",
         maxOutputTokens: 8192,
-        thinkingConfig: { thinkingBudget: 1024 },
+        thinkingConfig: { thinkingBudget: 2048 },
         responseSchema: {
           type: Type.OBJECT,
           properties: {
@@ -449,12 +446,8 @@ export const getStockDeepDive = async (query: string): Promise<{ text: string, s
       contents: prompt, 
       config: { tools: [{ googleSearch: {} }] } 
     });
-    const sources: { title: string; uri: string }[] = [];
-    response.candidates?.[0]?.groundingMetadata?.groundingChunks?.forEach((c: any) => { 
-      if (c.web) sources.push({ title: c.web.title, uri: c.web.uri }); 
-    });
-    return { text: response.text || "분석 불가", sources };
-  } catch (error) { return { text: "분석 중 오류 발생", sources: [] }; }
+    return { text: response.text || "분석 불가", sources: [] };
+  } catch (error) { throw error; }
 };
 
 export const classifyTransactionTypes = async (transactions: any[]): Promise<any[]> => {
@@ -478,31 +471,5 @@ export const classifyTransactionTypes = async (transactions: any[]): Promise<any
       }
     });
     return safeJsonParse(response.text) || [];
-  } catch (error) { return []; }
-};
-
-export const getAssetHistory = async (ticker: string, name: string): Promise<{ date: string, price: number }[]> => {
-  const prompt = `Return daily closing prices for the last 30 days for "${ticker || name}" as JSON.`;
-  try {
-    const response = await generateContentWithRetry({
-      model: 'gemini-3-flash-preview',
-      contents: prompt,
-      config: {
-        tools: [{ googleSearch: {} }],
-        responseMimeType: "application/json",
-        responseSchema: { 
-          type: Type.ARRAY, 
-          items: { 
-            type: Type.OBJECT, 
-            properties: { 
-              date: { type: Type.STRING }, 
-              price: { type: Type.NUMBER } 
-            }, 
-            required: ["date", "price"] 
-          } 
-        }
-      }
-    });
-    return (safeJsonParse(response.text) || []) as { date: string, price: number }[];
   } catch (error) { return []; }
 };
