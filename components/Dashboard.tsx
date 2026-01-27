@@ -204,7 +204,7 @@ const Dashboard: React.FC<DashboardProps> = ({ assets, accounts, user, onRefresh
         </div>
 
         <div className="h-64 w-full relative">
-          <ResponsiveContainer width="100%" height="100%">
+          <ResponsiveContainer width="100%" height="100%" minWidth={0}>
             <PieChart>
               <Pie
                 data={pieChartData}

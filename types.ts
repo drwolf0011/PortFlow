@@ -25,7 +25,7 @@ export interface Account {
   institution: string;
   accountNumber: string;
   nickname: string;
-  type: AccountType; // Added: 계좌 유형
+  type: AccountType;
   color?: string;
   isHidden?: boolean; 
 }
@@ -34,7 +34,7 @@ export interface Transaction {
   id: string;
   assetId?: string;
   accountId?: string; 
-  managementType?: AccountType; // Added: 자산관리유형 (계좌유형 연동)
+  managementType?: AccountType;
   date: string;
   type: TransactionType;
   assetType: AssetType; 
@@ -49,7 +49,7 @@ export interface Transaction {
 export interface Asset {
   id: string;
   accountId?: string; 
-  managementType?: AccountType; // Added: 자산관리유형 (계좌유형 연동)
+  managementType?: AccountType;
   name: string;
   ticker?: string;
   type: AssetType;
@@ -66,37 +66,25 @@ export interface PerformancePoint {
   value: number;
 }
 
-export interface AIAnalysis {
-  marketTrend: string;
-  rebalancingStrategy: string;
-  recommendations: {
-    ticker: string;
-    reason: string;
-    targetWeight: number;
-  }[];
-  sources: { title: string; uri: string }[];
-}
-
 export interface UserProfile {
   name: string;
   id: string;
-  cloudSync?: {
-    apiKey: string;
-    binId: string;
-  };
-  investmentGoal?: string; // 예: "노후 자금 마련", "5년 내 주택 구입"
-  goalPrompt?: string;     // AI가 생성한 상세 지침 프롬프트
+  pin: string;
+  dataBinId: string; // 개인 데이터 저장소 ID
+  investmentGoal?: string;
+  goalPrompt?: string;
 }
 
-// --- Shared AI Types ---
+// 중앙 사용자 디렉토리 저장 구조
+export interface UsersRegistry {
+  users: UserProfile[];
+}
 
 export interface DiagnosisResponse {
   currentDiagnosis: string;
   marketConditions: string;
   sources: { title: string; uri: string }[];
 }
-
-// --- AI Strategy Types (Moved from geminiService) ---
 
 export interface ExecutionPlanItem {
   assetName: string;
@@ -134,8 +122,6 @@ export interface SavedStrategy {
   diagnosis?: DiagnosisResponse;
   strategy?: RebalancingStrategy;
 }
-
-// --- Sync & App Data ---
 
 export interface SyncConfig {
   apiKey: string;
