@@ -114,15 +114,6 @@ export interface RebalancingStrategy {
   executionGroups: ExecutionGroup[]; 
 }
 
-export interface SavedStrategy {
-  id: string;
-  createdAt: number;
-  type: 'DIAGNOSIS' | 'STRATEGY';
-  name: string;
-  diagnosis?: DiagnosisResponse;
-  strategy?: RebalancingStrategy;
-}
-
 export interface SyncConfig {
   apiKey: string;
   binId: string;
@@ -140,5 +131,4 @@ export interface AppData {
   lastUpdated: string;
   exchangeRate: number;
   timestamp: number;
-  savedStrategies?: SavedStrategy[];
 }

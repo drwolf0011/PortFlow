@@ -1,14 +1,14 @@
 
-import React, { useState, useMemo, useRef, useEffect } from 'react';
+import React, { useState, useMemo, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { getAIDiagnosis, getAIStrategy, generateGoalPrompt } from '../services/geminiService';
-import { Asset, RebalancingStrategy, SavedStrategy, Account, UserProfile, DiagnosisResponse } from '../types';
+import { Asset, RebalancingStrategy, Account, UserProfile, DiagnosisResponse } from '../types';
 import { 
   Sparkles, Loader2, Target, Activity, Zap, Briefcase, 
   ArrowRight, Lightbulb, ShieldCheck, Wallet,
-  BookOpen, Trash2, Settings2, X, PlayCircle, 
+  Settings2, X, PlayCircle, 
   CheckCircle2, ChevronRight, ChevronLeft, MessageSquare,
-  FileText, RefreshCw, BookmarkCheck, Layers, Coins, Hourglass, Heart, Save, Check
+  RefreshCw, Layers, Coins, Hourglass, Heart
 } from 'lucide-react';
 
 interface AIAdvisorProps {
@@ -16,28 +16,18 @@ interface AIAdvisorProps {
   accounts: Account[];
   onApplyRebalancing: (institution: string) => void;
   exchangeRate: number;
-  onSaveStrategy: (data: { 
-    type: 'DIAGNOSIS' | 'STRATEGY', 
-    name: string, 
-    diagnosis?: DiagnosisResponse, 
-    strategy?: RebalancingStrategy 
-  }) => void;
-  savedStrategies: SavedStrategy[];
-  onDeleteStrategy: (id: string) => void;
   user: UserProfile | null;
   onUpdateUser: (updatedUser: UserProfile) => void;
 }
 
 const AIAdvisor: React.FC<AIAdvisorProps> = ({ 
   assets, accounts, onApplyRebalancing, exchangeRate, 
-  onSaveStrategy, savedStrategies, onDeleteStrategy,
   user, onUpdateUser
 }) => {
   const [diagnosis, setDiagnosis] = useState<DiagnosisResponse | null>(null);
   const [strategy, setStrategy] = useState<RebalancingStrategy | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
   const [strategyLoading, setStrategyLoading] = useState<boolean>(false);
-  const [isSavedModalOpen, setIsSavedModalOpen] = useState(false);
   
   const contextHash = useMemo(() => {
     const assetsKey = assets.map(a => `${a.id}-${a.quantity}-${a.currentPrice}`).join('|');
@@ -123,29 +113,11 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({
     return { buy, sell };
   }, [strategy]);
 
-  const handleSaveDiagnosis = () => {
-    if (!diagnosis) return;
-    const name = prompt("진단 리포트 저장명을 입력하세요:", `자산 정밀 진단 (${new Date().toLocaleDateString()})`);
-    if (name) onSaveStrategy({ type: 'DIAGNOSIS', name: name.trim(), diagnosis });
-  };
-
-  const handleSaveStrategy = () => {
-    if (!strategy) return;
-    const name = prompt("전략 리포트 저장명을 입력하세요:", strategy.name || `최적화 실행 전략 (${new Date().toLocaleDateString()})`);
-    if (name) onSaveStrategy({ type: 'STRATEGY', name: name.trim(), diagnosis: diagnosis || undefined, strategy });
-  };
-
   return (
     <div className="p-5 space-y-8 pb-40 animate-in fade-in duration-500">
       <div className="flex flex-col gap-4 px-1">
          <div className="flex items-center justify-between">
            <h2 className="text-xl font-black text-slate-800 tracking-tight">AI 자산관리자</h2>
-           <button 
-             onClick={() => setIsSavedModalOpen(true)} 
-             className="flex items-center gap-1.5 px-4 py-2 bg-white border border-slate-200 rounded-full text-[10px] font-black text-slate-600 shadow-sm active:scale-95 transition-all"
-           >
-             <BookOpen size={12} className="text-indigo-600" /> 보관함 ({savedStrategies.length})
-           </button>
          </div>
 
          <div className="bg-white p-5 rounded-[2rem] border border-slate-100 shadow-sm flex items-center justify-between">
@@ -178,7 +150,7 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({
               disabled={loading || (diagnosis && !isDataChanged)} 
               className={`w-full py-4.5 rounded-[1.5rem] font-black text-sm flex items-center justify-center gap-2.5 shadow-xl active:scale-95 transition-all ${diagnosis && !isDataChanged ? 'bg-emerald-500 text-white' : 'bg-white text-slate-900'}`}
             >
-              {loading ? <Loader2 size={18} className="animate-spin text-indigo-600" /> : (diagnosis && !isDataChanged ? <Check size={18} /> : <Sparkles size={18} className="text-indigo-600" />)}
+              {loading ? <Loader2 size={18} className="animate-spin text-indigo-600" /> : (diagnosis && !isDataChanged ? <CheckCircle2 size={18} /> : <Sparkles size={18} className="text-indigo-600" />)}
               {loading ? '자산 정밀 분석 중...' : (diagnosis && !isDataChanged ? '최신 분석 완료됨' : '신규 자산 분석 시작')}
             </button>
           </div>
@@ -193,12 +165,6 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({
                 <div className="p-2.5 bg-indigo-50 text-indigo-600 rounded-xl"><Activity size={20} /></div>
                 <h4 className="text-sm font-black text-slate-800 uppercase tracking-tight">정밀 진단 리포트</h4>
               </div>
-              <button 
-                onClick={handleSaveDiagnosis}
-                className="flex items-center gap-1.5 text-[10px] font-black text-indigo-600 bg-indigo-50 px-4 py-2 rounded-full hover:bg-indigo-100 transition-all active:scale-95 shadow-sm"
-              >
-                <Save size={12} /> 저장
-              </button>
             </div>
             <div className="prose prose-slate prose-sm max-w-none text-slate-600 leading-relaxed pt-2">
               <ReactMarkdown>{diagnosis.currentDiagnosis}</ReactMarkdown>
@@ -228,12 +194,6 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({
                   <h3 className="font-black text-slate-800 text-lg flex items-center gap-2"><ShieldCheck size={20} className="text-indigo-600" />추천 실행 전략</h3>
                   <div className="flex gap-2">
                     <button onClick={fetchStrategy} disabled={strategyLoading || !isStrategyChanged} className={`p-2 rounded-xl transition-all ${isStrategyChanged ? 'bg-amber-100 text-amber-600' : 'bg-slate-100 text-slate-400'}`} title="전략 재수립"><RefreshCw size={16} className={strategyLoading ? 'animate-spin' : ''} /></button>
-                    <button 
-                      onClick={handleSaveStrategy}
-                      className="flex items-center gap-1.5 px-4 py-2 bg-indigo-600 text-white rounded-full text-[10px] font-black hover:bg-indigo-700 active:scale-95 transition-all shadow-md"
-                    >
-                      <BookmarkCheck size={14} /> 보관함 저장
-                    </button>
                   </div>
                 </div>
 
@@ -258,7 +218,7 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({
                   <div className="flex items-center gap-2.5 mb-2"><Layers size={22} className="text-indigo-600" /><h4 className="font-black text-slate-800 text-xl tracking-tight">상세 매매 리스트</h4></div>
                   <div className="bg-slate-50 p-6 rounded-[2rem] border border-slate-100 flex items-center justify-between">
                     <div className="flex-1"><p className="text-[10px] font-black text-blue-500 uppercase mb-1">매도 확보 자금</p><p className="text-base font-black text-slate-800">+{planSummary.sell.toLocaleString()}원</p></div>
-                    <ArrowRight className="text-slate-200" />
+                    <ArrowRight className="text-slate-200" size={20} />
                     <div className="flex-1 text-right"><p className="text-[10px] font-black text-rose-500 uppercase mb-1">매수 필요 자금</p><p className="text-base font-black text-slate-800">-{planSummary.buy.toLocaleString()}원</p></div>
                   </div>
                   {strategy.executionGroups?.map((group, gIdx) => (
@@ -284,42 +244,6 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({
               </div>
             )}
           </section>
-        </div>
-      )}
-
-      {/* 보관함 모달 */}
-      {isSavedModalOpen && (
-        <div className="fixed inset-0 z-[400] flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={() => setIsSavedModalOpen(false)}></div>
-          <div className="relative bg-white w-full max-w-md rounded-[2.5rem] shadow-2xl p-8 max-h-[80vh] overflow-y-auto no-scrollbar">
-            <div className="flex justify-between items-center mb-6">
-              <h3 className="text-xl font-black text-slate-800">전략 보관함</h3>
-              <button onClick={() => setIsSavedModalOpen(false)} className="p-2 bg-slate-50 rounded-full text-slate-400"><X size={20}/></button>
-            </div>
-            <div className="space-y-3">
-              {savedStrategies.length === 0 ? (
-                <div className="py-12 text-center opacity-30"><FileText size={48} className="mx-auto mb-2"/><p className="text-xs font-bold">저장된 내역이 없습니다.</p></div>
-              ) : (
-                savedStrategies.map(s => (
-                  <div key={s.id} className="flex items-center gap-3 p-4 bg-slate-50 rounded-2xl border border-slate-100 hover:border-indigo-300 transition-all group">
-                    <button 
-                      onClick={() => { 
-                        if (s.diagnosis) setDiagnosis(s.diagnosis); 
-                        if (s.strategy) setStrategy(s.strategy); 
-                        setIsSavedModalOpen(false); 
-                      }} 
-                      className="flex-1 text-left"
-                    >
-                      <p className="text-[10px] font-black text-indigo-600 uppercase mb-0.5">{s.type}</p>
-                      <h4 className="text-sm font-black text-slate-800 truncate">{s.name}</h4>
-                      <p className="text-[9px] font-bold text-slate-400">{new Date(s.createdAt).toLocaleString()}</p>
-                    </button>
-                    <button onClick={() => onDeleteStrategy(s.id)} className="p-2 text-slate-300 hover:text-rose-500 transition-colors"><Trash2 size={16}/></button>
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
         </div>
       )}
 

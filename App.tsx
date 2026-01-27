@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 /* Fix: Using wildcard import for react-router-dom to resolve named export errors in this environment */
 import * as ReactRouterDOM from 'react-router-dom';
@@ -19,7 +20,7 @@ import ManualTransactionEntry from './components/ManualTransactionEntry';
 import DeleteConfirmModal from './components/DeleteConfirmModal';
 import AuthScreen from './components/AuthScreen';
 import { EXCHANGE_RATE as DEFAULT_EXCHANGE_RATE, CLOUD_MASTER_KEY } from './constants';
-import { Asset, Transaction, TransactionType, AssetType, Account, SyncConfig, AppData, SavedStrategy, RebalancingStrategy, UserProfile, DiagnosisResponse } from './types';
+import { Asset, Transaction, TransactionType, AssetType, Account, SyncConfig, AppData, RebalancingStrategy, UserProfile, DiagnosisResponse } from './types';
 import { updateAssetPrices } from './services/geminiService';
 import { createBin, updateBin, readBin, fetchUsersRegistry, updateUsersRegistry } from './services/storageService';
 
@@ -79,31 +80,6 @@ const AppContent: React.FC = () => {
     return saved ? parseFloat(saved) : DEFAULT_EXCHANGE_RATE;
   });
   const [lastUpdated, setLastUpdated] = useState<string>(() => localStorage.getItem('portflow_last_updated') || '-');
-  const [savedStrategies, setSavedStrategies] = useState<SavedStrategy[]>(() => {
-    try {
-      const saved = localStorage.getItem('portflow_saved_strategies');
-      const parsed = saved ? JSON.parse(saved) : [];
-      
-      // 데이터 마이그레이션: 기존 데이터(strategy만 있는 경우)를 새로운 구조로 변환
-      if (Array.isArray(parsed)) {
-        return parsed.map((s: any) => {
-          if (s.strategy && !s.type) {
-            // Legacy format detected
-            return {
-              id: s.id,
-              createdAt: s.createdAt,
-              type: 'STRATEGY',
-              name: s.strategy.name || '저장된 전략',
-              strategy: s.strategy,
-              diagnosis: undefined
-            } as SavedStrategy;
-          }
-          return s as SavedStrategy;
-        }).filter(s => s && s.id);
-      }
-      return [];
-    } catch (e) { return []; }
-  });
 
   const [syncConfig, setSyncConfig] = useState<SyncConfig>(() => {
     try {
@@ -214,51 +190,14 @@ const AppContent: React.FC = () => {
   useEffect(() => { localStorage.setItem('portflow_user', JSON.stringify(user)); }, [user]);
   useEffect(() => { localStorage.setItem('portflow_exchange_rate', dynamicExchangeRate.toString()); }, [dynamicExchangeRate]);
   useEffect(() => { localStorage.setItem('portflow_last_updated', lastUpdated); }, [lastUpdated]);
-  useEffect(() => { 
-    localStorage.setItem('portflow_saved_strategies', JSON.stringify(savedStrategies));
-    setLocalUpdateTimestamp(Date.now());
-  }, [savedStrategies]);
-
-  const handleSaveStrategy = useCallback((data: { 
-    type: 'DIAGNOSIS' | 'STRATEGY', 
-    name: string, 
-    diagnosis?: DiagnosisResponse, 
-    strategy?: RebalancingStrategy 
-  }) => {
-    if (data.type === 'STRATEGY' && (!data.strategy || !data.strategy.executionGroups)) {
-      showToast("저장할 수 없는 전략 형식입니다.");
-      return;
-    }
-    if (data.type === 'DIAGNOSIS' && !data.diagnosis) {
-      showToast("저장할 진단 데이터가 없습니다.");
-      return;
-    }
-    
-    const newSaved: SavedStrategy = { 
-      id: Date.now().toString() + Math.random().toString(36).substr(2, 5),
-      createdAt: Date.now(), 
-      type: data.type,
-      name: data.name,
-      diagnosis: data.diagnosis && JSON.parse(JSON.stringify(data.diagnosis)), // Deep Copy
-      strategy: data.strategy && JSON.parse(JSON.stringify(data.strategy)) // Deep Copy
-    };
-    
-    setSavedStrategies(prev => [newSaved, ...prev]);
-    showToast(data.type === 'DIAGNOSIS' ? "진단 결과가 보관함에 저장되었습니다." : "전략이 보관함에 저장되었습니다.");
-  }, [showToast]);
-
-  const handleDeleteStrategy = useCallback((id: string) => {
-    setSavedStrategies(prev => prev.filter(s => s.id !== id));
-    showToast("보관함에서 삭제되었습니다.");
-  }, [showToast]);
 
   const getCurrentAppData = useCallback((): AppData => {
     return {
       assets, transactions, accounts, user, history, lastUpdated, 
-      exchangeRate: dynamicExchangeRate, savedStrategies, 
+      exchangeRate: dynamicExchangeRate, 
       timestamp: localUpdateTimestamp
     };
-  }, [assets, transactions, accounts, user, history, lastUpdated, dynamicExchangeRate, savedStrategies, localUpdateTimestamp]);
+  }, [assets, transactions, accounts, user, history, lastUpdated, dynamicExchangeRate, localUpdateTimestamp]);
 
   const applyAppData = useCallback((data: AppData) => {
     if (!data) return;
@@ -269,7 +208,6 @@ const AppContent: React.FC = () => {
     setAssets(syncedAssets);
     if (Array.isArray(data.accounts)) setAccounts([...data.accounts]);
     if (Array.isArray(data.history)) setHistory([...data.history]);
-    if (Array.isArray(data.savedStrategies)) setSavedStrategies([...data.savedStrategies]);
     if (data.user) setUser({ ...data.user });
     if (data.lastUpdated) setLastUpdated(data.lastUpdated);
     if (data.exchangeRate) setDynamicExchangeRate(data.exchangeRate);
@@ -537,6 +475,7 @@ const AppContent: React.FC = () => {
     setUser(updatedUser);
     setIsAuthenticated(true);
 
+    // 로그인 직후 클라우드 데이터를 "내리기(Pull)" 수행하여 로컬 상태를 최신화함
     if (updatedUser.dataBinId) {
       setSyncConfig(prev => ({ 
         ...prev, 
@@ -544,7 +483,8 @@ const AppContent: React.FC = () => {
         binId: updatedUser.dataBinId, 
         autoSync: true 
       }));
-      setTimeout(() => handleSync('SMART'), 800);
+      // 내리기(Pull) 명시적 수행
+      setTimeout(() => handleSync('FORCE_PULL'), 800);
     } else if (updatedUser.cloudSync && updatedUser.cloudSync.apiKey) {
       setSyncConfig(prev => ({
         ...prev,
@@ -553,10 +493,12 @@ const AppContent: React.FC = () => {
         autoSync: true
       }));
       showToast("저장된 클라우드 정보를 복원하고 데이터를 불러옵니다...");
-      setTimeout(() => handleSync('SMART'), 800);
+      // 내리기(Pull) 명시적 수행
+      setTimeout(() => handleSync('FORCE_PULL'), 800);
     } else if (syncConfig.apiKey && syncConfig.binId) {
       showToast("클라우드 데이터를 불러오고 있습니다...");
-      setTimeout(() => handleSync('SMART'), 600);
+      // 내리기(Pull) 명시적 수행
+      setTimeout(() => handleSync('FORCE_PULL'), 600);
     }
   };
 
@@ -598,7 +540,7 @@ const AppContent: React.FC = () => {
         <Routes>
           <Route path="/" element={<Dashboard assets={assets} accounts={accounts} transactions={transactions} user={user} onRefresh={handleUpdatePrices} isUpdating={isUpdatingPrices} lastUpdated={lastUpdated} history={history} exchangeRate={dynamicExchangeRate} />} />
           <Route path="/assets" element={<AssetList assets={assets} setAssets={setAssets} onAddAsset={() => { setEditingAsset(undefined); setIsManualModalOpen(true); }} onEditAsset={(a) => { setEditingAsset(a); setIsManualModalOpen(true); }} onDeleteAsset={handleDeleteAsset} onSync={handleLocalSync} onRefreshPrices={handleUpdatePrices} isRefreshing={isUpdatingPrices} exchangeRate={dynamicExchangeRate} accounts={accounts} />} />
-          <Route path="/advisor" element={<AIAdvisor assets={assets} accounts={accounts} onApplyRebalancing={(inst) => showToast(`${inst} 리밸런싱 시뮬레이션 전송`)} exchangeRate={dynamicExchangeRate} onSaveStrategy={handleSaveStrategy} savedStrategies={savedStrategies} onDeleteStrategy={handleDeleteStrategy} user={user} onUpdateUser={handleUpdateUser} />} />
+          <Route path="/advisor" element={<AIAdvisor assets={assets} accounts={accounts} onApplyRebalancing={(inst) => showToast(`${inst} 리밸런싱 시뮬레이션 전송`)} exchangeRate={dynamicExchangeRate} user={user} onUpdateUser={handleUpdateUser} />} />
           <Route path="/history" element={<TransactionHistory transactions={transactions} accounts={accounts} onDelete={handleDeleteTransaction} onEdit={(tx) => { setEditingTransaction(tx); setIsTransactionModalOpen(true); }} onUpdate={handleUpdateTransactions} exchangeRate={dynamicExchangeRate} />} />
           <Route path="/analytics" element={<AnalyticsView history={history} assets={assets} exchangeRate={dynamicExchangeRate} />} />
           <Route path="/accounts" element={<AccountManager accounts={accounts} setAccounts={setAccounts} assets={assets} exchangeRate={dynamicExchangeRate} />} />
