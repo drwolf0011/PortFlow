@@ -176,6 +176,10 @@ const AppContent: React.FC = () => {
       });
 
       if (totalQty > 0) {
+        // 최신 거래 기록에서 관리 유형을 가져오거나 기존 메타 또는 계좌 설정에서 가져옴
+        const latestTx = sortedTxs[sortedTxs.length - 1];
+        const finalManagementType = latestTx.managementType || linkedAccount?.type || meta?.managementType || AccountType.GENERAL;
+
         newAssets.push({
           id: meta?.id || Math.random().toString(36).substr(2, 9),
           name,
@@ -188,7 +192,7 @@ const AppContent: React.FC = () => {
           currentPrice: meta?.currentPrice || sortedTxs[sortedTxs.length - 1].price,
           currency: sortedTxs[0].currency,
           accountId: accId === 'none' ? undefined : accId,
-          managementType: linkedAccount ? linkedAccount.type : (meta?.managementType || AccountType.GENERAL)
+          managementType: finalManagementType
         });
       }
     });
@@ -466,7 +470,7 @@ const AppContent: React.FC = () => {
       const oldAcc = editingAsset.accountId;
       const newTxs = transactions.map(t => {
         if (t.name === oldName && t.institution === oldInst && t.accountId === oldAcc) {
-          return { ...t, name: asset.name, institution: asset.institution, accountId: asset.accountId, assetType: asset.type, currency: asset.currency };
+          return { ...t, name: asset.name, institution: asset.institution, accountId: asset.accountId, managementType: asset.managementType, assetType: asset.type, currency: asset.currency };
         }
         return t;
       });
@@ -477,6 +481,7 @@ const AppContent: React.FC = () => {
       const initialTx: Transaction = {
         id: Math.random().toString(36).substr(2, 9),
         accountId: asset.accountId,
+        managementType: asset.managementType, // 관리 유형 포함
         date: new Date().toLocaleDateString('en-CA'),
         type: TransactionType.BUY,
         assetType: asset.type,

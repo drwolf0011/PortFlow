@@ -1,7 +1,7 @@
 
 import React, { useState, useMemo, useRef, useEffect } from 'react';
-import { X, Calendar, Search, ChevronRight, ChevronLeft, ChevronsLeft, ChevronsRight, Loader2, Sparkles, CreditCard, CheckCircle2, Clock, Save, Layers, RefreshCw, BookmarkCheck, Globe } from 'lucide-react';
-import { Transaction, TransactionType, Asset, Account, AssetType } from '../types';
+import { X, Calendar, Search, ChevronRight, ChevronLeft, ChevronsLeft, ChevronsRight, Loader2, Sparkles, CreditCard, CheckCircle2, Clock, Save, Layers, RefreshCw, BookmarkCheck, Globe, Landmark } from 'lucide-react';
+import { Transaction, TransactionType, Asset, Account, AssetType, AccountType } from '../types';
 import { searchStockList, StockInfo } from '../services/geminiService';
 
 interface ManualTransactionEntryProps {
@@ -20,6 +20,7 @@ const ManualTransactionEntry: React.FC<ManualTransactionEntryProps> = ({ onClose
     type: transaction?.type || TransactionType.BUY,
     assetType: transaction?.assetType || AssetType.STOCK,
     accountId: transaction?.accountId || '',
+    managementType: transaction?.managementType || AccountType.GENERAL,
     institution: transaction?.institution || '',
     name: transaction?.name || '',
     quantity: transaction?.quantity || 0,
@@ -33,9 +34,6 @@ const ManualTransactionEntry: React.FC<ManualTransactionEntryProps> = ({ onClose
   const [isSearching, setIsSearching] = useState(false);
   const [searchResults, setSearchResults] = useState<StockInfo[]>([]);
   const suggestionRef = useRef<HTMLDivElement>(null);
-
-  const [isCalendarOpen, setIsCalendarOpen] = useState(false);
-  const [viewDate, setViewDate] = useState(new Date());
 
   const myAssetSuggestions = useMemo(() => {
     if (!Array.isArray(assets)) return [];
@@ -58,19 +56,23 @@ const ManualTransactionEntry: React.FC<ManualTransactionEntryProps> = ({ onClose
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
+  // 계좌 선택 시 자산관리유형 및 금융기관 자동 연동
+  useEffect(() => {
+    if (formData.accountId) {
+      const acc = accounts.find(a => a.id === formData.accountId);
+      if (acc) {
+        setFormData(prev => ({
+          ...prev,
+          managementType: acc.type,
+          institution: acc.institution
+        }));
+      }
+    }
+  }, [formData.accountId, accounts]);
+
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
     
-    if (name === 'accountId') {
-      const acc = accounts.find(a => a.id === value);
-      setFormData(prev => ({
-        ...prev,
-        accountId: value,
-        institution: acc ? acc.institution : prev.institution
-      }));
-      return;
-    }
-
     if (name === 'name') {
       setSearchTerm(value);
       setFormData(prev => ({ ...prev, name: value }));
@@ -119,6 +121,7 @@ const ManualTransactionEntry: React.FC<ManualTransactionEntryProps> = ({ onClose
       ...prev, 
       name: asset.name, 
       accountId: asset.accountId || '', 
+      managementType: asset.managementType || AccountType.GENERAL,
       institution: asset.institution, 
       currency: asset.currency, 
       price: isCash ? 1 : asset.currentPrice, 
@@ -213,6 +216,25 @@ const ManualTransactionEntry: React.FC<ManualTransactionEntryProps> = ({ onClose
 
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-1.5">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">거래 계좌</label>
+              <select name="accountId" value={formData.accountId} onChange={handleChange} className="w-full px-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-bold outline-none focus:border-indigo-500 transition-all">
+                <option value="">직접 입력 / 계좌 미지정</option>
+                {accounts.map(acc => <option key={acc.id} value={acc.id}>{acc.nickname} ({acc.institution})</option>)}
+              </select>
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-black text-indigo-600 uppercase tracking-widest ml-1">자산관리유형</label>
+              <div className="relative">
+                <Landmark className="absolute left-4 top-1/2 -translate-y-1/2 text-indigo-300" size={14} />
+                <select name="managementType" value={formData.managementType} onChange={handleChange} className="w-full pl-11 pr-4 py-4 bg-indigo-50/50 border border-indigo-100 rounded-2xl text-[11px] font-black text-indigo-700 outline-none focus:border-indigo-500 transition-all appearance-none">
+                  {Object.values(AccountType).map(type => <option key={type} value={type}>{type}</option>)}
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-1.5">
               <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">수량</label>
               <input type="number" name="quantity" placeholder="0" value={formData.quantity || ''} onChange={handleChange} className="w-full px-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-bold outline-none focus:border-indigo-500 transition-all" />
             </div>
@@ -238,14 +260,6 @@ const ManualTransactionEntry: React.FC<ManualTransactionEntryProps> = ({ onClose
               <p className="text-[9px] font-bold text-slate-400 ml-1 italic">* 환차손익의 정확한 계산을 위해 거래 당시의 원화 결제 환율을 입력해주세요.</p>
             </div>
           )}
-
-          <div className="space-y-1.5">
-            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">거래 계좌</label>
-            <select name="accountId" value={formData.accountId} onChange={handleChange} className="w-full px-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-bold outline-none focus:border-indigo-500 transition-all">
-              <option value="">계좌 선택 (필수)</option>
-              {accounts.map(acc => <option key={acc.id} value={acc.id}>{acc.nickname} ({acc.institution})</option>)}
-            </select>
-          </div>
 
           <div className={`rounded-[1.5rem] p-5 border flex items-center justify-between font-bold text-sm shrink-0 ${formData.type === TransactionType.BUY ? 'bg-rose-50 border-rose-100' : 'bg-blue-50 border-blue-100'}`}>
             <span className="text-slate-500 font-black">원화 환산 총액 (성과 기준액)</span>

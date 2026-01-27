@@ -34,6 +34,7 @@ export interface Transaction {
   id: string;
   assetId?: string;
   accountId?: string; 
+  managementType?: AccountType; // Added: 자산관리유형 (계좌유형 연동)
   date: string;
   type: TransactionType;
   assetType: AssetType; 
