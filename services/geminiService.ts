@@ -1,13 +1,6 @@
 
 import { GoogleGenAI, GenerateContentResponse, Type } from "@google/genai";
-import { Asset, AssetType, RebalancingStrategy, Account, AccountType, UserProfile } from "../types";
-
-export interface AnalysisResponse {
-  currentDiagnosis: string;
-  marketConditions: string;
-  bestStrategy: RebalancingStrategy;
-  sources: { title: string; uri: string }[];
-}
+import { Asset, AssetType, RebalancingStrategy, Account, AccountType, UserProfile, DiagnosisResponse } from "../types";
 
 export interface StockInfo {
   name: string;
@@ -23,77 +16,44 @@ export interface PriceUpdateResult {
   exchangeRate?: number;
 }
 
-// 시세 캐시 인터페이스 및 전역 캐시 객체
 interface CachedPrice {
   price: number;
   timestamp: number;
 }
 const PRICE_CACHE = new Map<string, CachedPrice>();
-const CACHE_TTL = 10 * 60 * 1000; // 10분 동안 캐시 유효
+const CACHE_TTL = 30 * 60 * 1000; // 캐시 유효 시간을 30분으로 연장
 
-/**
- * JSON 응답이 중간에 잘린 경우(Truncation)를 대비한 복구형 파서
- */
 const safeJsonParse = (text: string) => {
   if (!text) return null;
-  
-  // 마크다운 코드 블록 제거
   let cleaned = text.replace(/```json|```/g, "").trim();
-  
-  // JSON 시작 지점 찾기
   const firstBrace = cleaned.indexOf('{');
   const firstBracket = cleaned.indexOf('[');
   let startIdx = -1;
-  let isArray = false;
-
   if (firstBrace !== -1 && (firstBracket === -1 || firstBrace < firstBracket)) {
     startIdx = firstBrace;
-    isArray = false;
   } else if (firstBracket !== -1) {
     startIdx = firstBracket;
-    isArray = true;
   }
-
   if (startIdx === -1) return null;
   cleaned = cleaned.substring(startIdx);
-
-  // 1차 시도: 표준 파싱
   try {
     return JSON.parse(cleaned);
   } catch (e) {
-    console.warn("표준 JSON 파싱 실패, 복구 시도 중...");
-    
-    // 2차 시도: 잘린 JSON 복구 로직
     try {
       let repaired = cleaned;
-      
-      // 1. 열린 따옴표 닫기 (문자열 도중 잘림 방지)
       const quoteCount = (repaired.match(/"/g) || []).length;
-      if (quoteCount % 2 !== 0) {
-        repaired += '"';
-      }
-
-      // 2. 스택을 이용해 누락된 괄호 추적 및 보정
+      if (quoteCount % 2 !== 0) repaired += '"';
       const stack: string[] = [];
       for (let i = 0; i < repaired.length; i++) {
         const char = repaired[i];
         if (char === '{') stack.push('}');
         else if (char === '[') stack.push(']');
-        else if (char === '}') {
-          if (stack[stack.length - 1] === '}') stack.pop();
-        } else if (char === ']') {
-          if (stack[stack.length - 1] === ']') stack.pop();
-        }
+        else if (char === '}') { if (stack[stack.length - 1] === '}') stack.pop(); }
+        else if (char === ']') { if (stack[stack.length - 1] === ']') stack.pop(); }
       }
-
-      // 역순으로 닫히지 않은 괄호 추가
-      while (stack.length > 0) {
-        repaired += stack.pop();
-      }
-
+      while (stack.length > 0) repaired += stack.pop();
       return JSON.parse(repaired);
     } catch (repairedError) {
-      console.error("JSON 복구 파싱 최종 실패:", repairedError);
       return null;
     }
   }
@@ -104,9 +64,11 @@ const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 class RequestQueue {
   private queue: (() => Promise<void>)[] = [];
   private activeCount = 0;
-  private maxConcurrency = 2; 
+  // 무료 티어 안전을 위해 동시 실행을 1개로 제한
+  private maxConcurrency = 1; 
   private lastRequestTime = 0;
-  private minInterval = 1000;
+  // 요청 간 최소 간격을 2초로 늘려 안전성 확보
+  private minInterval = 2000;
 
   async add<T>(task: () => Promise<T>): Promise<T> {
     return new Promise((resolve, reject) => {
@@ -116,7 +78,6 @@ class RequestQueue {
         if (timeSinceLast < this.minInterval) {
           await delay(this.minInterval - timeSinceLast);
         }
-
         this.activeCount++;
         this.lastRequestTime = Date.now();
         try {
@@ -129,7 +90,6 @@ class RequestQueue {
           this.next();
         }
       };
-      
       if (this.activeCount < this.maxConcurrency) {
         wrapper();
       } else {
@@ -146,107 +106,78 @@ class RequestQueue {
   }
 }
 
-const requestQueue = new RequestQueue();
+export const globalRequestQueue = new RequestQueue();
 
-async function generateContentWithRetry(
-  params: any,
-  useQueue = true
-): Promise<GenerateContentResponse> {
+async function generateContentWithRetry(params: any, useQueue = true): Promise<GenerateContentResponse> {
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
   
-  if (params.config && !params.config.thinkingConfig && params.model.includes('flash')) {
-    params.config.thinkingConfig = { thinkingBudget: 0 };
-  }
-
   const apiCall = async () => {
     let lastError;
-    const maxRetries = 3;
+    const maxRetries = 1; // 사용자의 요청에 따라 재시도 횟수를 1회로 변경
     for (let i = 0; i < maxRetries; i++) {
       try {
         return await ai.models.generateContent(params);
       } catch (error: any) {
         lastError = error;
-        const status = error.status || error.code;
-        if (status === 429) {
-           const waitTime = (5000 * Math.pow(2, i)) + (Math.random() * 1000);
-           await delay(waitTime);
-           continue;
+        // 429(Quota Exceeded) 에러 대응
+        const status = error.status || error.code || (error.message?.includes('429') ? 429 : 0);
+        
+        if (status === 429 || error.message?.includes('quota')) {
+          // 지수 백오프: 5초, 10초, 20초, 40초... 점진적으로 대기 시간 증가
+          const waitTime = (5000 * Math.pow(2, i)) + (Math.random() * 2000);
+          console.warn(`Gemini API Quota Exceeded. Retrying in ${Math.round(waitTime/1000)}s... (Attempt ${i+1}/${maxRetries})`);
+          await delay(waitTime);
+          continue;
         }
         throw error;
       }
     }
     throw lastError;
   };
-
-  return useQueue ? requestQueue.add(apiCall) : apiCall();
+  
+  return useQueue ? globalRequestQueue.add(apiCall) : apiCall();
 }
 
-const chunkArray = <T>(array: T[], size: number): T[][] => {
-  const chunks: T[][] = [];
-  for (let i = 0; i < array.length; i += size) {
-    chunks.push(array.slice(i, i + size));
-  }
-  return chunks;
-};
-
-/**
- * 자산 시세를 일괄 업데이트합니다.
- * 중복 종목을 제거하고 캐싱을 적용하여 효율적으로 처리합니다.
- */
 export const updateAssetPrices = async (assets: Asset[]): Promise<PriceUpdateResult> => {
   const now = Date.now();
   const allUpdatedPrices: Record<string, number> = {};
   let latestExchangeRate: number | undefined;
-
-  // 1. 업데이트가 필요한 유니크한 종목 리스트 추출 (현금 제외)
+  
   const uniqueItemsMap = new Map<string, { name: string; ticker?: string; currency: string }>();
   
   assets.forEach(asset => {
     if (asset.type === AssetType.CASH) return;
-    
-    // 유니크 키 생성 (티커 우선, 없으면 이름 + 통화)
     const key = `${asset.ticker || asset.name}_${asset.currency}`;
     const cached = PRICE_CACHE.get(key);
     
-    // 캐시 확인 (10분 이내 데이터가 있으면 API 요청 대상에서 제외)
     if (cached && (now - cached.timestamp < CACHE_TTL)) {
       allUpdatedPrices[key] = cached.price;
     } else if (!uniqueItemsMap.has(key)) {
-      uniqueItemsMap.set(key, { 
-        name: asset.name, 
-        ticker: asset.ticker, 
-        currency: asset.currency 
-      });
+      uniqueItemsMap.set(key, { name: asset.name, ticker: asset.ticker, currency: asset.currency });
     }
   });
 
   const needUpdate = Array.from(uniqueItemsMap.entries());
-
-  // 2. 조회가 필요한 항목이 있다면 AI에게 요청 (10개씩 배치 처리)
   if (needUpdate.length > 0) {
-    const itemChunks = chunkArray(needUpdate, 10);
+    // 한 번에 최대 15개까지 묶어서 호출 (호출 횟수 최소화)
+    const itemChunks = [];
+    for (let i = 0; i < needUpdate.length; i += 15) {
+      itemChunks.push(needUpdate.slice(i, i + 15));
+    }
 
     for (const chunk of itemChunks) {
-      const chunkData = chunk.map(([key, info]) => ({
-        key,
-        name: info.name,
-        ticker: info.ticker,
-        currency: info.currency
+      const chunkData = chunk.map(([key, info]) => ({ 
+        key, 
+        name: info.name, 
+        ticker: info.ticker, 
+        currency: info.currency 
       }));
-
-      const prompt = `
-        [실시간 금융 데이터 업데이트]
-        다음 자산 리스트에 대해 최신 시장 가격을 조사하세요.
-        반드시 제시된 "key" 값을 JSON 응답의 키로 사용해야 합니다.
-        미국 주식은 USD, 한국 주식은 KRW 단위 가격을 응답하세요.
-        실시간 USD/KRW 환율 정보도 포함하세요.
-
-        조사 대상: ${JSON.stringify(chunkData)}
-      `;
-
+      
+      const prompt = `Investigate the latest market prices for these assets and provide the current USD/KRW exchange rate: ${JSON.stringify(chunkData)}. Return results as JSON with "prices" array containing {key, price} and an "exchangeRate" number.`;
+      
       try {
         const response = await generateContentWithRetry({
-          model: 'gemini-3-pro-preview', 
+          model: 'gemini-3-flash-preview', // 가격 업데이트는 비용이 저렴한 Flash 모델 사용
           contents: prompt,
           config: {
             tools: [{ googleSearch: {} }],
@@ -254,16 +185,16 @@ export const updateAssetPrices = async (assets: Asset[]): Promise<PriceUpdateRes
             responseSchema: {
               type: Type.OBJECT,
               properties: {
-                prices: {
-                  type: Type.ARRAY,
-                  items: {
-                    type: Type.OBJECT,
+                prices: { 
+                  type: Type.ARRAY, 
+                  items: { 
+                    type: Type.OBJECT, 
                     properties: { 
                       key: { type: Type.STRING }, 
                       price: { type: Type.NUMBER } 
-                    },
-                    required: ["key", "price"]
-                  }
+                    }, 
+                    required: ["key", "price"] 
+                  } 
                 },
                 exchangeRate: { type: Type.NUMBER }
               },
@@ -276,7 +207,6 @@ export const updateAssetPrices = async (assets: Asset[]): Promise<PriceUpdateRes
         if (parsed?.prices) {
           parsed.prices.forEach((p: any) => {
             allUpdatedPrices[p.key] = p.price;
-            // 내부 캐시 업데이트
             PRICE_CACHE.set(p.key, { price: p.price, timestamp: now });
           });
         }
@@ -284,129 +214,96 @@ export const updateAssetPrices = async (assets: Asset[]): Promise<PriceUpdateRes
           latestExchangeRate = parsed.exchangeRate;
         }
       } catch (error) {
-        console.error("Batch price update failed for chunk", error);
+        console.error("Price update failed for chunk:", error);
       }
     }
   }
 
-  // 3. 기존 자산 목록에 결과 매핑 (동일 종목은 동일 시세 적용)
   const updatedAssets = assets.map(asset => {
     if (asset.type === AssetType.CASH) return asset;
-    
     const key = `${asset.ticker || asset.name}_${asset.currency}`;
     const newPrice = allUpdatedPrices[key];
-    
     return newPrice ? { ...asset, currentPrice: newPrice } : asset;
   });
 
   return { updatedAssets, exchangeRate: latestExchangeRate };
 };
 
-export const generateGoalPrompt = async (answers: {
-  age: string,
-  risk: string,
-  purpose: string,
-  horizon: string,
-  preference: string
-}): Promise<{ goal: string, prompt: string }> => {
+export const generateGoalPrompt = async (answers: any): Promise<{ goal: string, prompt: string }> => {
   const prompt = `
-    다음은 사용자의 투자 성향 및 목표에 관한 답변입니다:
-    - 연령대: ${answers.age}
-    - 위험 선호도: ${answers.risk}
+    당신은 세계 최고의 자산관리 전문가입니다. 사용자의 정보를 바탕으로 요약된 '투자 목표 한 줄'과 AI가 자산 진단 시 참고할 '상세 투자 지침 프롬프트'를 한국어로 생성하십시오.
+    
+    [사용자 입력 정보]:
+    - 연령: ${answers.age}
+    - 투자 성향: ${answers.risk}
     - 투자 목적: ${answers.purpose}
     - 투자 기간: ${answers.horizon}
-    - 선호 자산/특이사항: ${answers.preference}
-
-    위 정보를 바탕으로 이 사용자를 위한 **전문적인 자산관리 지침 프롬프트**를 생성하세요. 
-    응답은 간결하고 명확해야 합니다.
+    - 선호 자산: ${answers.preference}
+    - 추가 요청 사항: ${answers.customRequest || "없음"}
+    
+    [작업 지침]:
+    1. 'goal': 사용자의 정보를 관통하는 핵심 투자 목표를 10자 내외의 한국어 구절로 작성하십시오 (예: 노후 대비 안정 성장형).
+    2. 'prompt': AI가 향후 이 사용자의 포트폴리오를 진단할 때 기준점으로 삼을 수 있는 구체적인 가이드라인을 작성하십시오. 특히 '추가 요청 사항'이 있다면 이를 최우선적으로 반영하여 지침을 구체화하십시오.
+    
+    [출력]: JSON 형식 { "goal": "...", "prompt": "..." }
   `;
-
+  
   try {
     const response = await generateContentWithRetry({
       model: 'gemini-3-flash-preview',
       contents: prompt,
       config: { 
         responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            goal: { type: Type.STRING },
-            prompt: { type: Type.STRING }
-          },
-          required: ["goal", "prompt"]
+        responseSchema: { 
+          type: Type.OBJECT, 
+          properties: { 
+            goal: { type: Type.STRING }, 
+            prompt: { type: Type.STRING } 
+          }, 
+          required: ["goal", "prompt"] 
         }
       }
     });
     const parsed = safeJsonParse(response.text);
-    return {
-      goal: parsed?.goal || "맞춤형 자산 관리",
-      prompt: parsed?.prompt || "성장과 안정을 동시에 고려한 분산 투자를 권장합니다."
+    return { 
+      goal: parsed?.goal || "맞춤형 관리", 
+      prompt: parsed?.prompt || "분산 투자를 권장합니다." 
     };
-  } catch (error) {
-    console.error(error);
-    return { goal: "개별 목표 설정 필요", prompt: "사용자 정보가 부족하여 기본 전략을 적용합니다." };
+  } catch (error) { 
+    return { goal: "목표 설정 필요", prompt: "기본 전략을 적용합니다." }; 
   }
 };
 
-export const getAIAnalysis = async (
+export const getAIDiagnosis = async (
   assets: Asset[], 
   accounts: Account[], 
   exchangeRate: number,
   userProfile: UserProfile | null
-): Promise<AnalysisResponse> => {
-  let totalValueKRW = 0;
-  let cashValueKRW = 0;
-
-  const accountMap = new Map(accounts.map(a => [a.id, a]));
-
-  const assetSummary = assets.length > 0 
-    ? assets.map(a => {
-        const price = a.currentPrice || 0;
-        const qty = a.quantity || 0;
-        const mult = a.currency === 'USD' ? exchangeRate : 1;
-        const valKRW = price * qty * mult;
-        
-        totalValueKRW += valKRW;
-        if (a.type === AssetType.CASH) cashValueKRW += valKRW;
-
-        const acc = a.accountId ? accountMap.get(a.accountId) : null;
-        const accType = acc ? acc.type : '종합(위탁)';
-
-        return `- [${a.institution} | ${accType} | ${a.type}] ${a.name}(${a.ticker || 'N/A'}): ${qty}주, 평가액 ${Math.floor(valKRW).toLocaleString()}원`;
-      }).join('\n')
-    : "자산 없음";
-
-  const goalInstruction = userProfile?.goalPrompt 
-    ? `사용자의 맞춤 지침: ${userProfile.goalPrompt}`
-    : "사용자의 목표: 2029년까지 자산 증식(Growth), 2030년부터 인컴 전환(Income).";
-
+): Promise<DiagnosisResponse> => {
+  const assetSummary = assets.map(a => `${a.institution} | ${a.type} | ${a.name}: ${a.quantity}주, 평가액 ${(a.currentPrice * a.quantity * (a.currency === 'USD' ? exchangeRate : 1)).toLocaleString()}원`).join('\n');
   const prompt = `
-    당신은 대한민국 금융 규정과 세법에 정통한 **수석 자산관리 전문가(PB)**입니다.
-    ${goalInstruction}
+    대한민국 상위 1%를 담당하는 자산관리 전문가(PB)로서 아래 포트폴리오를 정밀 진단하십시오.
+    이 진단은 후속 리밸런싱 전략의 기초 데이터로 사용됩니다.
 
-    [현재 포트폴리오 데이터]
-    - 총 자산: 약 ${Math.floor(totalValueKRW).toLocaleString()} KRW
-    - 가용 현금: 약 ${Math.floor(cashValueKRW).toLocaleString()} KRW
-    - 상세 보유 내역:
+    ${userProfile?.goalPrompt ? `[사용자 투자 원칙 및 요청 사항]: ${userProfile.goalPrompt}` : ""}
+    
+    [자산 포트폴리오 현황]:
     ${assetSummary}
-
-    [계좌 유형별 필수 운용 규정 및 전략]
-    1. 퇴직연금(IRP) 및 확정기여형(DC): 위험자산 70% 제한.
-    2. 개인연금(연금저축): 개별 주식 매수 불가 (ETF 가능).
-    3. ISA(중개형): 비과세 혜택 극대화.
-
-    [출력 요구사항]
-    - 한국어로 작성하고 JSON 형식을 엄격히 준수하십시오.
-    - **중요: JSON 응답이 너무 길어지지 않도록 아래 글자 수를 준수하세요.**
-    - currentDiagnosis: 250자 이내 핵심 요약
-    - bestStrategy.description: 150자 이내
-    - bestStrategy.rationale: 200자 이내
-    - executionPlanItem.reason: 60자 이내
+    
+    [분석 요구사항]:
+    1. 자산 배분 상태, 특정 종목/섹터 편중 리스크, 환율 노출도 등을 팩트 기반으로 분석하십시오.
+    2. 현재 포트폴리오의 가장 치명적인 약점이나 개선이 시급한 '핵심 문제점'을 구체적으로 지적하십시오.
+    3. 최근 글로벌 거시 경제 및 시장 상황과 연결하여 이 포트폴리오의 취약점을 설명하십시오.
+    
+    [출력 형식]:
+    - JSON { "currentDiagnosis": "...", "marketConditions": "..." }
+    - 'currentDiagnosis': 마크다운 형식. 핵심 문제점과 진단 내용을 한국어로 상세히 서술.
+    - 'marketConditions': 현재 시장 상황 요약 (한국어).
   `;
 
   try {
     const response = await generateContentWithRetry({
-      model: 'gemini-3-pro-preview', 
+      model: 'gemini-3-pro-preview', // 진단은 고성능 Pro 모델 사용
       contents: prompt,
       config: { 
         tools: [{ googleSearch: {} }],
@@ -415,74 +312,124 @@ export const getAIAnalysis = async (
           type: Type.OBJECT,
           properties: {
             currentDiagnosis: { type: Type.STRING },
-            marketConditions: { type: Type.STRING },
-            bestStrategy: {
-              type: Type.OBJECT,
-              properties: {
-                name: { type: Type.STRING },
-                description: { type: Type.STRING },
-                riskLevel: { type: Type.STRING },
-                predictedReturnRate: { type: Type.NUMBER },
-                rationale: { type: Type.STRING },
-                targetSectorAllocation: { type: Type.STRING },
-                executionGroups: {
-                  type: Type.ARRAY,
-                  items: {
-                    type: Type.OBJECT,
-                    properties: {
-                      institution: { type: Type.STRING },
-                      accountName: { type: Type.STRING },
-                      isPension: { type: Type.BOOLEAN },
-                      items: {
-                        type: Type.ARRAY,
-                        items: {
-                          type: Type.OBJECT,
-                          properties: {
-                            assetName: { type: Type.STRING },
-                            ticker: { type: Type.STRING },
-                            action: { type: Type.STRING },
-                            quantity: { type: Type.NUMBER },
-                            estimatedPrice: { type: Type.NUMBER },
-                            totalAmount: { type: Type.NUMBER },
-                            reason: { type: Type.STRING }
-                          }
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
+            marketConditions: { type: Type.STRING }
           },
-          required: ["currentDiagnosis", "marketConditions", "bestStrategy"]
+          required: ["currentDiagnosis", "marketConditions"]
         }
       }
     });
-    
     const parsed = safeJsonParse(response.text);
     const sources: { title: string; uri: string }[] = [];
-    response.candidates?.[0]?.groundingMetadata?.groundingChunks?.forEach((c: any) => {
-      if (c.web) sources.push({ title: c.web.title, uri: c.web.uri });
+    response.candidates?.[0]?.groundingMetadata?.groundingChunks?.forEach((c: any) => { 
+      if (c.web) sources.push({ title: c.web.title, uri: c.web.uri }); 
     });
-
-    if (!parsed) {
-      throw new Error("AI 분석 데이터 파싱에 실패했습니다. 자산 내역이 너무 많거나 응답이 길어 처리할 수 없습니다. 핵심 자산 위주로 다시 시도해보세요.");
-    }
-
     return { 
-      currentDiagnosis: parsed.currentDiagnosis || "진단 데이터를 분석하는 중 오류가 발생했습니다.",
-      marketConditions: parsed.marketConditions || "분석 완료",
-      bestStrategy: parsed.bestStrategy,
+      currentDiagnosis: parsed?.currentDiagnosis || "진단 생성 실패",
+      marketConditions: parsed?.marketConditions || "정보 없음",
       sources 
     };
-  } catch (error) {
-    console.error(error);
-    throw error;
-  }
+  } catch (error) { throw error; }
+};
+
+export const getAIStrategy = async (
+  assets: Asset[], 
+  accounts: Account[], 
+  exchangeRate: number,
+  diagnosis: string,
+  userProfile: UserProfile | null
+): Promise<RebalancingStrategy> => {
+  const rawAssetData = assets.map(a => 
+    `- ${a.name}(${a.ticker || 'N/A'}): ${a.quantity}주 보유, 평단 ${a.purchasePrice} ${a.currency}, 현재가 ${a.currentPrice} ${a.currency} (${a.institution})`
+  ).join('\n');
+
+  const prompt = `
+    당신은 수석 자산관리 전문가(PB)입니다. 
+    앞서 수행된 [1단계 진단 결과]를 해결하기 위한 [2단계 리밸런싱 전략]을 수립하고, 이를 실행할 [3단계 구체적 매매 계획]을 작성하십시오.
+    
+    [1단계: 진단 결과 참조]
+    "${diagnosis}"
+    
+    [사용자 프로필]
+    투자 목표: ${userProfile?.investmentGoal || "자산 증식 및 리스크 관리"}
+    ${userProfile?.goalPrompt ? `세부 지침 및 요청 사항: ${userProfile.goalPrompt}` : ""}
+
+    [보유 자산 데이터]
+    ${rawAssetData}
+    환율: 1 USD = ${exchangeRate} KRW
+
+    [작업 지시사항]:
+    1. **일관성 필수 (Consistency Check)**: 
+       - 상단의 전략 설명(description)과 하단의 구체적 실행 계획(executionGroups)은 완벽히 일치해야 합니다. 설명에는 "매도"한다고 하고 계획에 없으면 안 됩니다.
+    2. **데이터 무결성 (Integrity)**:
+       - **매도(SELL)**: 반드시 [보유 자산 데이터]에 존재하는 종목만 매도할 수 있습니다. (없는 종목 매도 금지)
+       - **매수(BUY)**: 진단된 문제(예: 특정 섹터 부족)를 해결하는 구체적 종목(ETF 포함)을 제안하십시오.
+       - 수량 및 금액 계산: 수량 * 현재가 = 총액.
+    3. **연결성**: 각 실행 아이템(매수/매도)의 'reason' 필드에, 이것이 진단 결과의 어떤 문제를 해결하기 위함인지 한국어로 명확히 적으십시오.
+
+    [JSON 응답 스키마 준수 (한국어 작성)]:
+    - name: 전략 이름 (예: 리스크 분산형 성장 전략)
+    - description: 전략 개요 (한국어)
+    - rationale: 이 전략을 선택한 논리적 이유
+    - executionGroups: 계좌별 실행 그룹 리스트
+  `;
+
+  try {
+    const response = await generateContentWithRetry({
+      model: 'gemini-3-pro-preview', 
+      contents: prompt,
+      config: { 
+        responseMimeType: "application/json",
+        // CRITICAL FIX: Increased maxOutputTokens to 8192 to prevent JSON truncation
+        maxOutputTokens: 8192,
+        thinkingConfig: { thinkingBudget: 1024 },
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            name: { type: Type.STRING },
+            description: { type: Type.STRING },
+            riskLevel: { type: Type.STRING },
+            predictedReturnRate: { type: Type.NUMBER },
+            rationale: { type: Type.STRING },
+            targetSectorAllocation: { type: Type.STRING },
+            executionGroups: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  institution: { type: Type.STRING },
+                  accountName: { type: Type.STRING },
+                  items: {
+                    type: Type.ARRAY,
+                    items: {
+                      type: Type.OBJECT,
+                      properties: {
+                        assetName: { type: Type.STRING },
+                        ticker: { type: Type.STRING },
+                        action: { type: Type.STRING },
+                        quantity: { type: Type.NUMBER },
+                        totalAmount: { type: Type.NUMBER },
+                        reason: { type: Type.STRING }
+                      },
+                      required: ["assetName", "action", "quantity", "totalAmount"]
+                    }
+                  }
+                },
+                required: ["institution", "items"]
+              }
+            }
+          },
+          required: ["name", "description", "executionGroups"]
+        }
+      }
+    });
+    const parsed = safeJsonParse(response.text);
+    if (!parsed) throw new Error("전략 생성 실패");
+    return parsed as RebalancingStrategy;
+  } catch (error) { throw error; }
 };
 
 export const searchStockList = async (query: string): Promise<StockInfo[]> => {
-  const prompt = `"${query}" 관련 투자 자산 5개의 실시간 정보를 JSON으로 반환하세요.`;
+  const prompt = `Search for 5 investment assets related to "${query}" and return info as JSON.`;
   try {
     const response = await generateContentWithRetry({
       model: 'gemini-3-flash-preview',
@@ -490,18 +437,18 @@ export const searchStockList = async (query: string): Promise<StockInfo[]> => {
       config: {
         tools: [{ googleSearch: {} }],
         responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.ARRAY,
-          items: {
-            type: Type.OBJECT,
-            properties: {
-              name: { type: Type.STRING },
-              ticker: { type: Type.STRING },
-              price: { type: Type.NUMBER },
-              currency: { type: Type.STRING },
-              type: { type: Type.STRING }
-            }
-          }
+        responseSchema: { 
+          type: Type.ARRAY, 
+          items: { 
+            type: Type.OBJECT, 
+            properties: { 
+              name: { type: Type.STRING }, 
+              ticker: { type: Type.STRING }, 
+              price: { type: Type.NUMBER }, 
+              currency: { type: Type.STRING }, 
+              type: { type: Type.STRING } 
+            } 
+          } 
         }
       }
     });
@@ -510,35 +457,38 @@ export const searchStockList = async (query: string): Promise<StockInfo[]> => {
 };
 
 export const getStockDeepDive = async (query: string): Promise<{ text: string, sources: { title: string; uri: string }[] }> => {
-  const prompt = `"${query}" 종목의 최신 심층 분석 리포트 (마크다운). IRP/DC 위험자산 해당 여부 포함.`;
+  const prompt = `Latest deep-dive report (Markdown) for "${query}".`;
   try {
-    const response = await generateContentWithRetry({
-      model: 'gemini-3-pro-preview',
-      contents: prompt,
-      config: { tools: [{ googleSearch: {} }] }
+    const response = await generateContentWithRetry({ 
+      model: 'gemini-3-pro-preview', 
+      contents: prompt, 
+      config: { tools: [{ googleSearch: {} }] } 
     });
     const sources: { title: string; uri: string }[] = [];
-    response.candidates?.[0]?.groundingMetadata?.groundingChunks?.forEach((c: any) => {
-      if (c.web) sources.push({ title: c.web.title, uri: c.web.uri });
+    response.candidates?.[0]?.groundingMetadata?.groundingChunks?.forEach((c: any) => { 
+      if (c.web) sources.push({ title: c.web.title, uri: c.web.uri }); 
     });
     return { text: response.text || "분석 불가", sources };
   } catch (error) { return { text: "분석 중 오류 발생", sources: [] }; }
 };
 
-export const classifyTransactionTypes = async (transactions: {id: string, name: string, institution: string}[]): Promise<any[]> => {
-  const prompt = `다음 거래 내역들을 분류하세요: ${JSON.stringify(transactions)}`;
+export const classifyTransactionTypes = async (transactions: any[]): Promise<any[]> => {
+  const prompt = `Classify transaction categories: ${JSON.stringify(transactions)}`;
   try {
     const response = await generateContentWithRetry({
       model: 'gemini-3-flash-preview',
       contents: prompt,
       config: {
         responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.ARRAY,
-          items: {
-            type: Type.OBJECT,
-            properties: { id: { type: Type.STRING }, type: { type: Type.STRING } }
-          }
+        responseSchema: { 
+          type: Type.ARRAY, 
+          items: { 
+            type: Type.OBJECT, 
+            properties: { 
+              id: { type: Type.STRING }, 
+              type: { type: Type.STRING } 
+            } 
+          } 
         }
       }
     });
@@ -547,9 +497,7 @@ export const classifyTransactionTypes = async (transactions: {id: string, name: 
 };
 
 export const getAssetHistory = async (ticker: string, name: string): Promise<{ date: string, price: number }[]> => {
-  const prompt = `Research the historical daily closing prices for the asset "${ticker || name}" for the last 30 days and return it in JSON format.
-  Response format: [{"date": "YYYY-MM-DD", "price": 12345}, ...]`;
-
+  const prompt = `Return daily closing prices for the last 30 days for "${ticker || name}" as JSON.`;
   try {
     const response = await generateContentWithRetry({
       model: 'gemini-3-flash-preview',
@@ -557,22 +505,19 @@ export const getAssetHistory = async (ticker: string, name: string): Promise<{ d
       config: {
         tools: [{ googleSearch: {} }],
         responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.ARRAY,
-          items: {
-            type: Type.OBJECT,
-            properties: {
-              date: { type: Type.STRING },
-              price: { type: Type.NUMBER }
-            },
-            required: ["date", "price"]
-          }
+        responseSchema: { 
+          type: Type.ARRAY, 
+          items: { 
+            type: Type.OBJECT, 
+            properties: { 
+              date: { type: Type.STRING }, 
+              price: { type: Type.NUMBER } 
+            }, 
+            required: ["date", "price"] 
+          } 
         }
       }
     });
     return (safeJsonParse(response.text) || []) as { date: string, price: number }[];
-  } catch (error) {
-    console.error("Failed to fetch asset history", error);
-    return [];
-  }
+  } catch (error) { return []; }
 };

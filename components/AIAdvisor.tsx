@@ -1,25 +1,29 @@
 
 import React, { useState, useMemo, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
-import { getAIAnalysis, getStockDeepDive, generateGoalPrompt, AnalysisResponse } from '../services/geminiService';
-import { Asset, RebalancingStrategy, SavedStrategy, Account, UserProfile } from '../types';
+import { getAIDiagnosis, getAIStrategy, getStockDeepDive, generateGoalPrompt } from '../services/geminiService';
+import { Asset, RebalancingStrategy, SavedStrategy, Account, UserProfile, DiagnosisResponse } from '../types';
 import { 
-  Sparkles, ChevronDown, ChevronUp,
-  Loader2, Search, ExternalLink, Target, TrendingUp, Info, 
-  Link as LinkIcon, Activity, Zap, Globe, Briefcase, 
-  BarChart3, Scale, Banknote, ArrowRight, 
-  Calculator, Lightbulb, CheckCircle2, ShieldCheck, AlertTriangle, Wallet,
-  Bookmark, BookOpen, Trash2, Calendar, FolderOpen, User, Settings2, Check,
-  X, FileText, BarChart, MoveUpRight, Quote, Clock, ShieldAlert
+  Sparkles, Loader2, Search, Target, TrendingUp,
+  Activity, Zap, Globe, Briefcase, 
+  Scale, ArrowRight, 
+  Lightbulb, ShieldCheck, Wallet,
+  Bookmark, BookOpen, Trash2, Calendar, Settings2,
+  X, FileSearch, Save, PlayCircle, CheckCircle2, ChevronRight, ChevronLeft, MessageSquare,
+  FileText, ClipboardCheck
 } from 'lucide-react';
-import { BarChart as ReBarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, ReferenceLine } from 'recharts';
 
 interface AIAdvisorProps {
   assets: Asset[];
   accounts: Account[];
   onApplyRebalancing: (institution: string) => void;
   exchangeRate: number;
-  onSaveStrategy: (strategy: RebalancingStrategy) => void;
+  onSaveStrategy: (data: { 
+    type: 'DIAGNOSIS' | 'STRATEGY', 
+    name: string, 
+    diagnosis?: DiagnosisResponse, 
+    strategy?: RebalancingStrategy 
+  }) => void;
   savedStrategies: SavedStrategy[];
   onDeleteStrategy: (id: string) => void;
   user: UserProfile | null;
@@ -31,161 +35,155 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({
   onSaveStrategy, savedStrategies, onDeleteStrategy,
   user, onUpdateUser
 }) => {
-  const [data, setData] = useState<AnalysisResponse | null>(null);
+  const [diagnosis, setDiagnosis] = useState<DiagnosisResponse | null>(null);
+  const [strategy, setStrategy] = useState<RebalancingStrategy | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
-  const [showSources, setShowSources] = useState(false); 
+  const [strategyLoading, setStrategyLoading] = useState<boolean>(false);
   const [stockQuery, setStockQuery] = useState('');
   const [searchLoading, setSearchLoading] = useState(false);
   const [stockDeepDive, setStockDeepDive] = useState<{ text: string, sources: { title: string; uri: string }[] } | null>(null);
   const [isSavedModalOpen, setIsSavedModalOpen] = useState(false);
-  const [isGoalWizardOpen, setIsGoalWizardOpen] = useState(false);
-  const [loadedStrategyId, setLoadedStrategyId] = useState<string | null>(null);
-  const [errorInfo, setErrorInfo] = useState<string | null>(null);
-  const researchSectionRef = useRef<HTMLDivElement>(null);
-
+  
   // Goal Wizard State
+  const [isGoalWizardOpen, setIsGoalWizardOpen] = useState(false);
   const [wizardStep, setWizardStep] = useState(0);
   const [wizardAnswers, setWizardAnswers] = useState({
     age: '',
     risk: '',
     purpose: '',
     horizon: '',
-    preference: ''
+    preference: '',
+    customRequest: ''
   });
   const [isWizardProcessing, setIsWizardProcessing] = useState(false);
-  const [suggestedGoal, setSuggestedGoal] = useState<{ goal: string, prompt: string } | null>(null);
 
-  const fetchAnalysis = async () => {
-    if (assets.length === 0) {
-      alert("분석할 자산이 없습니다. 먼저 자산을 등록해주세요.");
+  const researchSectionRef = useRef<HTMLDivElement>(null);
+
+  const fetchDiagnosis = async () => {
+    if (assets.length === 0) { alert("자산을 먼저 등록해주세요."); return; }
+    setLoading(true);
+    setDiagnosis(null);
+    setStrategy(null);
+    try {
+      const result = await getAIDiagnosis(assets, accounts, exchangeRate, user);
+      setDiagnosis(result);
+    } catch (err: any) { alert(err.message || "진단 중 오류 발생"); }
+    finally { setLoading(false); }
+  };
+
+  const fetchStrategy = async () => {
+    if (!diagnosis) return;
+    setStrategyLoading(true);
+    try {
+      const result = await getAIStrategy(assets, accounts, exchangeRate, diagnosis.currentDiagnosis, user);
+      setStrategy(result);
+    } catch (err: any) { alert(err.message || "전략 생성 중 오류 발생"); }
+    finally { setStrategyLoading(false); }
+  };
+
+  const handleSaveDiagnosis = () => {
+    if (!diagnosis) {
+      alert("저장할 진단 결과가 없습니다.");
       return;
     }
-    setLoading(true);
-    setData(null);
-    setErrorInfo(null);
-    setLoadedStrategyId(null);
-    try {
-      const result = await getAIAnalysis(assets, accounts || [], exchangeRate, user);
-      setData(result);
-    } catch (err: any) {
-      console.error(err);
-      setErrorInfo(err.message || "분석 로드 중 오류가 발생했습니다.");
-    } finally {
-      setLoading(false);
+    const defaultName = `자산 진단 (${new Date().toLocaleDateString()})`;
+    const name = prompt("진단 리포트 저장명:", defaultName);
+    if (name === null) return;
+    
+    const finalName = name.trim() || defaultName;
+    onSaveStrategy({ 
+      type: 'DIAGNOSIS', 
+      name: finalName, 
+      diagnosis: { ...diagnosis } 
+    });
+  };
+
+  const handleSaveStrategyClick = () => {
+    if (!strategy) {
+      alert("저장할 전략이 없습니다.");
+      return;
     }
+    const defaultName = strategy.name || "통합 자산 관리 전략";
+    const name = prompt("통합 전략 리포트 저장명:", defaultName);
+    if (name === null) return;
+    
+    const finalName = name.trim() || defaultName;
+    // 전략 저장 시 현재 진단 결과가 있다면 함께 저장하여 링크함
+    onSaveStrategy({ 
+      type: 'STRATEGY', 
+      name: finalName, 
+      diagnosis: diagnosis ? { ...diagnosis } : undefined,
+      strategy: { ...strategy } 
+    });
+  };
+
+  const handleLoadSavedItem = (saved: SavedStrategy) => {
+    // 진단과 전략을 동시에 로드하여 맥락을 유지
+    if (saved.diagnosis) setDiagnosis(saved.diagnosis);
+    else setDiagnosis(null);
+
+    if (saved.strategy) setStrategy(saved.strategy);
+    else setStrategy(null);
+
+    setIsSavedModalOpen(false);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const handleDeepDiveSearch = async (queryInput?: string) => {
     const finalQuery = queryInput || stockQuery;
     if (!finalQuery.trim() || searchLoading) return;
-    
     setSearchLoading(true);
     setStockQuery(finalQuery);
     setStockDeepDive(null);
-    setShowSources(false); 
-    
     researchSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-
     try {
       const result = await getStockDeepDive(finalQuery);
       setStockDeepDive(result);
-    } catch (err) {
-      alert("분석 오류가 발생했습니다.");
-    } finally {
-      setSearchLoading(false);
-    }
+    } catch (err) { alert("분석 오류"); }
+    finally { setSearchLoading(false); }
   };
 
-  const handleSaveCurrentStrategy = () => {
-    if (data?.bestStrategy) {
-      onSaveStrategy(data.bestStrategy);
-    }
-  };
-
-  const handleLoadStrategy = (saved: SavedStrategy) => {
-    const reconstructedData: AnalysisResponse = {
-      currentDiagnosis: "*(저장된 전략을 불러왔습니다. 과거 시점의 진단 내용이 없을 수 있습니다.)*",
-      marketConditions: "저장된 기록",
-      bestStrategy: saved.strategy,
-      sources: []
-    };
-    setData(reconstructedData);
-    setErrorInfo(null);
-    setLoadedStrategyId(saved.id);
-    setIsSavedModalOpen(false);
-  };
-
-  const planSummary = useMemo(() => {
-    if (!data?.bestStrategy?.executionGroups) return { buy: 0, sell: 0, net: 0 };
-    let buy = 0, sell = 0;
-    data.bestStrategy.executionGroups.forEach(group => {
-      group.items?.forEach(item => {
-        const amount = item.totalAmount || 0;
-        if (item.action === 'BUY') buy += amount;
-        else if (item.action === 'SELL') sell += amount;
-      });
-    });
-    return { buy, sell, net: sell - buy };
-  }, [data]);
-
-  const wizardQuestions = [
-    { key: 'age', label: '현재 연령대가 어떻게 되시나요?', options: ['20대 이하', '30대', '40대', '50대', '60대 이상'] },
-    { key: 'risk', label: '선호하는 투자 위험 수준은?', options: ['안정 지향 (원금 보존 우선)', '중립성 (적정 수익과 위험)', '공격 투자 (높은 수익 추구)'] },
-    { key: 'purpose', label: '투자의 주된 목적은 무엇인가요?', options: ['노후 자금 마련', '주택 구입/확장', '자녀 교육/증여', '자산 증식 (Growth)', '현금 흐름 (Income)'] },
-    { key: 'horizon', label: '목표 달성까지 예상 기간은?', options: ['3년 미만', '3~10년', '10~20년', '20년 이상'] },
-    { key: 'preference', label: '특별히 선호하는 자산이나 제약사항이 있나요?', placeholder: '예: 미국 주식 선호, ESG 투자 관심, 가상자산 제외 등' }
-  ];
-
-  const handleWizardNext = () => {
-    if (wizardStep < wizardQuestions.length - 1) {
-      setWizardStep(prev => prev + 1);
-    } else {
-      processWizard();
-    }
-  };
-
-  const processWizard = async () => {
+  const handleCompleteGoalWizard = async () => {
+    if (!user) return;
     setIsWizardProcessing(true);
     try {
-      const suggestion = await generateGoalPrompt(wizardAnswers);
-      setSuggestedGoal(suggestion);
-    } catch (e) {
-      alert("지침 생성 중 오류가 발생했습니다.");
+      const { goal, prompt } = await generateGoalPrompt(wizardAnswers);
+      onUpdateUser({
+        ...user,
+        investmentGoal: goal,
+        goalPrompt: prompt
+      });
+      setIsGoalWizardOpen(false);
+      setWizardStep(0);
+      alert("투자 목표가 성공적으로 업데이트되었습니다. 이제 AI가 이 목표를 바탕으로 자산을 진단합니다.");
+    } catch (error) {
+      alert("목표 설정 중 오류가 발생했습니다.");
     } finally {
       setIsWizardProcessing(false);
     }
   };
 
-  const saveGoalSetting = () => {
-    if (suggestedGoal && user) {
-      onUpdateUser({
-        ...user,
-        investmentGoal: suggestedGoal.goal,
-        goalPrompt: suggestedGoal.prompt
-      });
-      setIsGoalWizardOpen(false);
-      setSuggestedGoal(null);
-      setWizardStep(0);
-      setWizardAnswers({ age: '', risk: '', purpose: '', horizon: '', preference: '' });
-      alert("투자 목표가 업데이트되었습니다. 이제 새로운 목표로 진단받을 수 있습니다.");
-    }
-  };
+  const planSummary = useMemo(() => {
+    if (!strategy || !strategy.executionGroups) return { buy: 0, sell: 0 };
+    let buy = 0, sell = 0;
+    strategy.executionGroups.forEach(g => g.items?.forEach(i => {
+      if (i.action === 'BUY') buy += i.totalAmount || 0;
+      else if (i.action === 'SELL') sell += i.totalAmount || 0;
+    }));
+    return { buy, sell };
+  }, [strategy]);
 
   return (
     <div className="p-5 space-y-8 pb-40 animate-in fade-in duration-500">
-      
       <div className="flex flex-col gap-4 px-1">
          <div className="flex items-center justify-between">
            <h2 className="text-xl font-black text-slate-800 tracking-tight">AI 자산관리자</h2>
-           <button 
-             onClick={() => setIsSavedModalOpen(true)}
-             className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 rounded-full text-[10px] font-black text-slate-500 hover:text-indigo-600 transition-colors shadow-sm"
-           >
-             <BookOpen size={12} /> 전략 보관함 ({savedStrategies.length})
+           <button onClick={() => setIsSavedModalOpen(true)} className="flex items-center gap-1.5 px-4 py-2 bg-white border border-slate-200 rounded-full text-[10px] font-black text-slate-600 shadow-sm active:scale-95 transition-all">
+             <BookOpen size={12} className="text-indigo-600" /> 전략 보관함 ({savedStrategies.length})
            </button>
          </div>
 
-         <div className="bg-white p-5 rounded-[2rem] border border-slate-100 shadow-sm flex items-center justify-between group">
+         <div className="bg-white p-5 rounded-[2rem] border border-slate-100 shadow-sm flex items-center justify-between">
            <div className="flex items-center gap-3 overflow-hidden">
              <div className="p-2.5 bg-indigo-50 text-indigo-600 rounded-xl shrink-0"><Target size={18} /></div>
              <div className="overflow-hidden">
@@ -193,225 +191,105 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({
                <h3 className="text-sm font-black text-slate-800 truncate">{user?.investmentGoal || '목표를 설정해주세요'}</h3>
              </div>
            </div>
-           <button 
-            onClick={() => { setWizardStep(0); setSuggestedGoal(null); setIsGoalWizardOpen(true); }}
-            className="p-2 bg-slate-50 text-slate-400 rounded-xl hover:text-indigo-600 hover:bg-indigo-50 transition-all shrink-0"
-           >
+           <button onClick={() => setIsGoalWizardOpen(true)} className="p-2 bg-slate-50 text-slate-400 rounded-xl hover:text-indigo-600 transition-all">
              <Settings2 size={18} />
            </button>
          </div>
       </div>
 
       <section className="bg-slate-900 rounded-[2.5rem] p-8 text-white shadow-2xl relative overflow-hidden">
-        <div className="absolute -top-24 -right-24 w-80 h-80 bg-indigo-600/20 rounded-full blur-[100px]"></div>
         <div className="relative z-10 space-y-6">
           <div className="flex items-center gap-4">
-            <div className="w-14 h-14 bg-indigo-600 rounded-2xl flex items-center justify-center shadow-lg shadow-indigo-500/20">
-              <Briefcase className="text-white" size={28} />
-            </div>
+            <div className="w-14 h-14 bg-indigo-600 rounded-2xl flex items-center justify-center shadow-lg"><Briefcase className="text-white" size={28} /></div>
             <div>
               <p className="text-[10px] font-black uppercase tracking-[0.3em] text-indigo-400 mb-1">Elite Wealth Management</p>
               <h2 className="text-2xl font-black tracking-tight leading-tight">PortFlow AI</h2>
             </div>
           </div>
-          
-          <div className="bg-white/5 border border-white/10 p-5 rounded-3xl backdrop-blur-md">
-            <div className="flex gap-4">
-              <div className="w-1 h-auto bg-indigo-500 rounded-full"></div>
-              <p className="text-sm font-medium text-slate-300 leading-relaxed">
-                <span className="text-white font-black underline decoration-indigo-500 underline-offset-4">{user?.investmentGoal || '개인별 목표'}</span>에 맞춰 
-                <span className="text-white font-black underline decoration-emerald-500 underline-offset-4 ml-1">스마트 포트폴리오</span>를 제안합니다.
-              </p>
-            </div>
-          </div>
-
-          <button 
-            onClick={fetchAnalysis}
-            disabled={loading}
-            className="w-full bg-white text-slate-900 py-4.5 rounded-[1.5rem] font-black text-sm flex items-center justify-center gap-2.5 hover:bg-indigo-50 transition-all active:scale-95 disabled:opacity-50 shadow-xl"
-          >
+          <button onClick={fetchDiagnosis} disabled={loading} className="w-full bg-white text-slate-900 py-4.5 rounded-[1.5rem] font-black text-sm flex items-center justify-center gap-2.5 shadow-xl active:scale-95 transition-all">
             {loading ? <Loader2 size={18} className="animate-spin text-indigo-600" /> : <Sparkles size={18} className="text-indigo-600" />}
-            {loading ? '맞춤 지침에 따른 진단 중...' : '포트폴리오 정밀 진단 시작'}
+            {loading ? '자산 정밀 진단 중...' : '신규 자산 분석 시작'}
           </button>
         </div>
       </section>
 
-      {loading && (
-        <div className="py-24 flex flex-col items-center justify-center text-center space-y-4 animate-pulse">
-          <div className="w-16 h-16 border-4 border-indigo-100 border-t-indigo-600 rounded-full animate-spin"></div>
-          <div>
-            <p className="text-sm font-black text-slate-800">개인별 맞춤 지침 분석 중</p>
-            <p className="text-[10px] text-slate-400 font-bold mt-1">계좌별 규정 • 사용자 목표 • 시장 상황 대조 중</p>
-          </div>
-        </div>
-      )}
-
-      {errorInfo && !loading && (
-        <div className="p-6 bg-rose-50 border border-rose-100 rounded-[2.5rem] flex flex-col items-center text-center space-y-4 animate-in zoom-in-95">
-          <div className="w-12 h-12 bg-rose-100 text-rose-600 rounded-2xl flex items-center justify-center">
-            <AlertTriangle size={24} />
-          </div>
-          <div>
-            <h4 className="text-sm font-black text-rose-900">분석을 완료하지 못했습니다</h4>
-            <p className="text-xs font-bold text-rose-700/70 mt-1 leading-relaxed">{errorInfo}</p>
-          </div>
-          <button 
-            onClick={fetchAnalysis}
-            className="px-6 py-2.5 bg-rose-600 text-white text-xs font-black rounded-full shadow-lg shadow-rose-200 active:scale-95 transition-all"
-          >
-            다시 시도
-          </button>
-        </div>
-      )}
-
-      {data && !loading && (
+      {diagnosis && !loading && (
         <div className="space-y-10 animate-in slide-in-from-bottom-4 duration-700">
-          
-          {loadedStrategyId && (
-             <div className="bg-amber-50 border border-amber-100 p-4 rounded-2xl flex items-center gap-3 text-amber-700">
-               <FolderOpen size={18} />
-               <p className="text-xs font-bold">보관함에서 불러온 과거 전략입니다. 현재 시세와 다를 수 있습니다.</p>
-             </div>
-          )}
-
-          <section className="bg-white p-7 rounded-[2.5rem] border border-slate-100 shadow-sm space-y-4">
-            <div className="flex items-center gap-2.5">
-              <div className="p-2.5 bg-indigo-50 text-indigo-600 rounded-xl shrink-0"><Activity size={20} /></div>
-              <h4 className="text-sm font-black text-slate-800 uppercase tracking-tight">보유 자산 현황 및 팩트 진단</h4>
+          <section className="bg-white p-7 rounded-[2.5rem] border border-slate-100 shadow-sm space-y-4 relative">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2.5 bg-indigo-50 text-indigo-600 rounded-xl shrink-0"><Activity size={20} /></div>
+                <h4 className="text-sm font-black text-slate-800 uppercase tracking-tight">자산 정밀 진단 리포트</h4>
+              </div>
+              <button onClick={handleSaveDiagnosis} className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 rounded-full text-[10px] font-black transition-all">
+                <Save size={12} /> 진단 저장
+              </button>
             </div>
-            <div className="prose prose-slate prose-sm max-w-none text-slate-600 leading-relaxed prose-p:mb-2">
-              <ReactMarkdown>{data?.currentDiagnosis || ""}</ReactMarkdown>
-            </div>
-            <div className="flex items-center gap-2 p-3 bg-slate-50 rounded-2xl border border-slate-100">
-               <Globe size={14} className="text-slate-400" />
-               <p className="text-[11px] font-bold text-slate-500">{data?.marketConditions || ""}</p>
+            <div className="prose prose-slate prose-sm max-w-none text-slate-600 leading-relaxed pt-2">
+              <ReactMarkdown>{diagnosis.currentDiagnosis}</ReactMarkdown>
             </div>
           </section>
 
-          {data.bestStrategy && (
-            <section className="space-y-4">
-              <div className="flex items-center justify-between px-1">
-                <div className="flex items-center gap-2">
-                  <ShieldCheck size={20} className="text-indigo-600" />
-                  <h3 className="font-black text-slate-800 text-lg">AI 권고 마스터 전략</h3>
-                </div>
-                <button 
-                  onClick={handleSaveCurrentStrategy}
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 text-indigo-600 rounded-full text-[10px] font-black hover:bg-indigo-100 transition-colors"
-                >
-                  <Bookmark size={12} /> 전략 저장
-                </button>
+          {!strategy && (
+            <div className="bg-indigo-50/50 p-8 rounded-[2.5rem] border border-indigo-100 text-center space-y-5">
+              <div className="w-16 h-16 bg-white rounded-3xl flex items-center justify-center mx-auto text-indigo-600"><Target size={32} /></div>
+              <div>
+                <h4 className="font-black text-slate-800">구체적인 실행 전략이 필요하신가요?</h4>
+                <p className="text-xs text-slate-500 font-medium mt-1">계좌별 최적의 매매 타이밍과 수량을 제안해 드립니다.</p>
               </div>
-              
-              <div className="p-7 rounded-[2.5rem] border-2 border-indigo-600 bg-indigo-50/10 shadow-xl shadow-indigo-100/20 relative overflow-hidden">
-                <div className="absolute top-0 right-0 bg-indigo-600 text-white text-[10px] font-black px-4 py-2 rounded-bl-2xl">OPTIMIZED</div>
-                
-                <div className="flex justify-between items-start mb-6">
-                  <div className="flex items-center gap-4">
-                    <div className={`w-12 h-12 rounded-2xl flex items-center justify-center ${data.bestStrategy.riskLevel === 'HIGH' ? 'bg-rose-100 text-rose-600' : 'bg-emerald-100 text-emerald-600'}`}>
-                      {data.bestStrategy.riskLevel === 'HIGH' ? <TrendingUp size={24} /> : <Scale size={24} />}
-                    </div>
-                    <div>
-                      <h4 className="font-black text-slate-800 text-lg">{data.bestStrategy.name}</h4>
-                      <p className="text-[11px] font-bold text-slate-400">{data.bestStrategy.targetSectorAllocation}</p>
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-[10px] font-black text-slate-400">연 예상 기대 수익</p>
-                    <p className="text-2xl font-black text-rose-500">+{data.bestStrategy.predictedReturnRate}%</p>
-                  </div>
-                </div>
-
-                <div className="space-y-4">
-                  <div className="bg-white/60 p-4 rounded-2xl border border-white shadow-sm">
-                    <p className="text-xs font-medium text-slate-600 leading-relaxed">{data.bestStrategy.description}</p>
-                  </div>
-                  <div className="flex items-start gap-3 p-4 bg-indigo-600 text-white rounded-2xl shadow-lg">
-                    <Lightbulb size={18} className="shrink-0 mt-0.5" />
-                    <div>
-                      <p className="text-[10px] font-black uppercase opacity-60 mb-1">Strategy Rationale</p>
-                      <p className="text-xs font-bold leading-relaxed">{data.bestStrategy.rationale}</p>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </section>
+              <button onClick={fetchStrategy} disabled={strategyLoading} className="w-full py-4.5 bg-indigo-600 text-white rounded-2xl font-black text-sm flex items-center justify-center gap-2 shadow-lg active:scale-95">
+                {strategyLoading ? <Loader2 size={18} className="animate-spin" /> : <Zap size={18} />}
+                {strategyLoading ? '전략 수립 중...' : '리밸런싱 액션 플랜 생성'}
+              </button>
+            </div>
           )}
 
-          {data.bestStrategy?.executionGroups && (
-            <section className="bg-white rounded-[3rem] p-8 shadow-2xl border border-indigo-50 relative overflow-hidden">
-              <div className="absolute top-0 left-0 w-full h-1.5 bg-gradient-to-r from-indigo-600 to-indigo-400"></div>
-              <div className="flex items-center gap-2.5 mb-8">
-                <Zap size={22} className="text-indigo-600" fill="currentColor" />
-                <h4 className="font-black text-slate-800 text-xl tracking-tight">실행 액션 플랜</h4>
+          {strategy && (
+            <section className="space-y-4">
+              <div className="flex items-center justify-between px-1">
+                <h3 className="font-black text-slate-800 text-lg flex items-center gap-2"><ShieldCheck size={20} className="text-indigo-600" />AI 추천 마스터 전략</h3>
+                <button onClick={handleSaveStrategyClick} className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 text-white rounded-full text-[10px] font-black active:scale-95"><Bookmark size={12} /> 전략 저장</button>
               </div>
-
-              <div className="mb-10 bg-slate-50 p-6 rounded-[2rem] border border-slate-100">
-                <div className="flex items-center gap-2 mb-5">
-                  <Banknote size={16} className="text-slate-400" />
-                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Self-Funding Summary</span>
+              <div className="p-7 rounded-[2.5rem] border-2 border-indigo-600 bg-indigo-50/10 shadow-xl relative overflow-hidden">
+                <div className="absolute top-0 right-0 bg-indigo-600 text-white text-[10px] font-black px-4 py-2 rounded-bl-2xl">AI Optimized</div>
+                <div className="flex justify-between items-start mb-6">
+                  <div className="flex items-center gap-4">
+                    <div className="w-12 h-12 rounded-2xl flex items-center justify-center bg-emerald-100 text-emerald-600"><Scale size={24} /></div>
+                    <div><h4 className="font-black text-slate-800 text-lg leading-tight">{strategy.name}</h4><p className="text-[11px] font-bold text-slate-400 mt-0.5">{strategy.targetSectorAllocation}</p></div>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-[10px] font-black text-slate-400">예상 수익률</p>
+                    <p className="text-2xl font-black text-rose-500">+{strategy.predictedReturnRate}%</p>
+                  </div>
                 </div>
-                <div className="flex items-center justify-between gap-4">
-                  <div className="flex-1">
-                    <p className="text-[10px] font-black text-blue-500 uppercase mb-1">매도 확보 자금</p>
-                    <p className="text-base font-black text-slate-800">+{planSummary.sell.toLocaleString()}원</p>
-                  </div>
-                  <ArrowRight className="text-slate-200" />
-                  <div className="flex-1 text-right">
-                    <p className="text-[10px] font-black text-rose-500 uppercase mb-1">매수 소요 자금</p>
-                    <p className="text-base font-black text-slate-800">-{planSummary.buy.toLocaleString()}원</p>
-                  </div>
+                <div className="space-y-4">
+                  <div className="bg-white/60 p-4 rounded-2xl border border-white shadow-sm"><p className="text-xs font-medium text-slate-600">{strategy.description}</p></div>
+                  <div className="flex items-start gap-3 p-4 bg-indigo-600 text-white rounded-2xl shadow-lg"><Lightbulb size={18} className="shrink-0" /><div><p className="text-xs font-bold leading-relaxed">{strategy.rationale}</p></div></div>
                 </div>
               </div>
 
-              <div className="space-y-8">
-                {data.bestStrategy.executionGroups?.map((group, gIdx) => (
+              <div className="bg-white rounded-[3rem] p-8 shadow-2xl border border-indigo-50 space-y-8">
+                <div className="flex items-center gap-2.5 mb-8"><Zap size={22} className="text-indigo-600" fill="currentColor" /><h4 className="font-black text-slate-800 text-xl tracking-tight">Step-by-Step 액션 플랜</h4></div>
+                <div className="bg-slate-50 p-6 rounded-[2rem] border border-slate-100 flex items-center justify-between gap-4">
+                  <div className="flex-1"><p className="text-[10px] font-black text-blue-500 uppercase">매도 확보 자금</p><p className="text-base font-black text-slate-800">+{planSummary.sell.toLocaleString()}원</p></div>
+                  <ArrowRight className="text-slate-200" /><div className="flex-1 text-right"><p className="text-[10px] font-black text-rose-500 uppercase">매수 필요 자금</p><p className="text-base font-black text-slate-800">-{planSummary.buy.toLocaleString()}원</p></div>
+                </div>
+                {strategy.executionGroups?.map((group, gIdx) => (
                   <div key={gIdx} className="border border-slate-100 rounded-[2rem] p-6 bg-slate-50/50">
-                    <div className="flex items-center justify-between mb-5">
-                      <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 bg-white rounded-xl shadow-sm flex items-center justify-center">
-                          <Wallet size={20} className="text-indigo-600" />
-                        </div>
-                        <div>
-                          <h5 className="font-black text-slate-800 text-sm">{group.accountName || group.institution}</h5>
-                          <p className="text-[10px] font-bold text-slate-400">{group.institution}</p>
-                        </div>
-                      </div>
-                    </div>
+                    <div className="flex items-center gap-3 mb-5"><div className="w-10 h-10 bg-white rounded-xl shadow-sm flex items-center justify-center"><Wallet size={20} className="text-indigo-600" /></div><div><h5 className="font-black text-slate-800 text-sm">{group.accountName || group.institution}</h5><p className="text-[10px] font-bold text-slate-400">{group.institution}</p></div></div>
                     <div className="space-y-3">
                       {group.items?.map((item, i) => (
-                        <div 
-                          key={i} 
-                          onClick={() => handleDeepDiveSearch(item.assetName)}
-                          className={`p-4 rounded-[1.5rem] border transition-all bg-white cursor-pointer group/item relative hover:shadow-lg active:scale-95 ${item.action === 'BUY' ? 'border-rose-100 hover:border-rose-300' : item.action === 'SELL' ? 'border-blue-100 hover:border-blue-300' : 'border-slate-100 hover:border-indigo-200'}`}
-                        >
+                        <div key={i} onClick={() => handleDeepDiveSearch(item.assetName)} className={`p-4 rounded-[1.5rem] border bg-white cursor-pointer active:scale-95 ${item.action === 'BUY' ? 'border-rose-100' : item.action === 'SELL' ? 'border-blue-100' : 'border-slate-100'}`}>
                           <div className="flex justify-between items-start mb-2">
                             <div className="flex gap-3">
-                              <div className={`w-8 h-8 rounded-xl flex items-center justify-center font-black text-[9px] ${
-                                item.action === 'BUY' ? 'bg-rose-500 text-white shadow-sm' : 
-                                item.action === 'SELL' ? 'bg-blue-500 text-white shadow-sm' : 'bg-slate-400 text-white'
-                              }`}>
+                              <div className={`w-8 h-8 rounded-xl flex items-center justify-center font-black text-[9px] ${item.action === 'BUY' ? 'bg-rose-500 text-white' : 'bg-blue-500 text-white'}`}>
                                 {item.action === 'BUY' ? '매수' : item.action === 'SELL' ? '매도' : '유지'}
                               </div>
-                              <div>
-                                <p className="text-xs font-black text-slate-800 flex items-center gap-1.5">
-                                  {item.assetName}
-                                  <span className="text-indigo-600 opacity-0 group-hover/item:opacity-100 transition-opacity"><Search size={10} /></span>
-                                </p>
-                                <p className="text-[9px] font-black text-slate-300 uppercase tracking-widest">{item.ticker}</p>
-                              </div>
+                              <div><p className="text-xs font-black text-slate-800">{item.assetName}</p></div>
                             </div>
-                            <div className="text-right">
-                              <p className="text-xs font-black text-slate-900">{Math.floor(item.totalAmount || 0).toLocaleString()}원</p>
-                              <p className="text-[8px] font-bold text-slate-400">{item.quantity.toLocaleString()}주 내외</p>
-                            </div>
+                            <div className="text-right"><p className="text-xs font-black text-slate-900">{Math.floor(item.totalAmount || 0).toLocaleString()}원</p></div>
                           </div>
-                          <p className="text-[10px] font-bold text-slate-500 leading-relaxed pl-11">{item.reason}</p>
-                          <div className="absolute right-4 bottom-4 opacity-0 group-hover/item:opacity-100 transition-opacity">
-                            <div className="flex items-center gap-1 text-[9px] font-black text-indigo-500 uppercase tracking-widest">
-                              Deep Dive <MoveUpRight size={10} />
-                            </div>
-                          </div>
+                          <p className="text-[10px] font-bold text-slate-500 pl-11">{item.reason}</p>
                         </div>
                       ))}
                     </div>
@@ -423,99 +301,139 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({
         </div>
       )}
 
+      {/* Goal Wizard Modal */}
       {isGoalWizardOpen && (
-        <div className="fixed inset-0 z-[250] flex items-end sm:items-center justify-center p-0 sm:p-4">
-          <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={() => setIsGoalWizardOpen(false)}></div>
+        <div className="fixed inset-0 z-[300] flex items-end sm:items-center justify-center p-0 sm:p-4">
+          <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm animate-in fade-in" onClick={() => setIsGoalWizardOpen(false)}></div>
           <div className="relative bg-white w-full max-w-lg rounded-t-[2.5rem] sm:rounded-[2.5rem] shadow-2xl overflow-hidden animate-in slide-in-from-bottom duration-300 flex flex-col max-h-[90dvh]">
-            <div className="px-8 pt-8 pb-4 flex justify-between items-center shrink-0">
+            <div className="px-8 pt-8 pb-4 flex justify-between items-center bg-white shrink-0">
               <div>
-                <h3 className="text-2xl font-black text-slate-800">투자 목표 설정 마법사</h3>
-                <p className="text-[10px] font-black text-indigo-600 uppercase tracking-widest mt-0.5">Custom Persona Wizard</p>
+                <h3 className="text-2xl font-black text-slate-800">투자 목표 설정</h3>
+                <p className="text-[10px] font-black text-indigo-600 uppercase tracking-widest mt-0.5">Investment Goal Discovery</p>
               </div>
               <button onClick={() => setIsGoalWizardOpen(false)} className="p-2 bg-slate-50 rounded-full text-slate-400"><X size={20}/></button>
             </div>
+            
+            <div className="p-8 overflow-y-auto no-scrollbar flex-1">
+              {/* Progress Bar */}
+              <div className="flex gap-1.5 mb-8">
+                {[0, 1, 2, 3, 4, 5].map(step => (
+                  <div key={step} className={`h-1.5 flex-1 rounded-full transition-all duration-500 ${wizardStep >= step ? 'bg-indigo-600' : 'bg-slate-100'}`}></div>
+                ))}
+              </div>
 
-            <div className="px-8 pt-4 pb-44 overflow-y-auto no-scrollbar flex-1 pb-safe">
-              {!suggestedGoal ? (
-                <div className="space-y-8">
-                  <div className="flex gap-2">
-                    {wizardQuestions.map((_, i) => (
-                      <div key={i} className={`h-1.5 flex-1 rounded-full transition-all ${i <= wizardStep ? 'bg-indigo-600' : 'bg-slate-100'}`}></div>
+              {wizardStep === 0 && (
+                <div className="space-y-6 animate-in fade-in slide-in-from-right-4">
+                  <div className="w-16 h-16 bg-indigo-50 text-indigo-600 rounded-2xl flex items-center justify-center mb-6"><Target size={32} /></div>
+                  <h4 className="text-xl font-black text-slate-800 leading-tight">나의 투자 성향에 맞춘<br/>스마트한 자산관리를 시작하세요.</h4>
+                  <p className="text-sm font-bold text-slate-400 leading-relaxed">연령, 자산 규모, 리스크 감수도를 분석하여 AI가 최적의 포트폴리오 가이드를 생성합니다.</p>
+                  <div className="grid grid-cols-1 gap-3 pt-4">
+                    {['20대 이하', '30대', '40대', '50대', '60대 이상'].map(age => (
+                      <button key={age} onClick={() => { setWizardAnswers({...wizardAnswers, age}); setWizardStep(1); }} className="w-full p-5 text-left bg-slate-50 hover:bg-indigo-50 border border-slate-100 hover:border-indigo-200 rounded-2xl font-black text-sm text-slate-700 transition-all flex justify-between items-center group">
+                        {age} <ChevronRight size={18} className="text-slate-300 group-hover:text-indigo-600" />
+                      </button>
                     ))}
                   </div>
+                </div>
+              )}
 
-                  <div className="space-y-6">
-                    <h4 className="text-lg font-black text-slate-800">{wizardQuestions[wizardStep].label}</h4>
-                    
-                    {wizardQuestions[wizardStep].options ? (
-                      <div className="grid grid-cols-1 gap-3">
-                        {wizardQuestions[wizardStep].options.map(opt => (
-                          <button
-                            key={opt}
-                            onClick={() => {
-                              setWizardAnswers(prev => ({ ...prev, [wizardQuestions[wizardStep].key]: opt }));
-                            }}
-                            className={`p-5 rounded-2xl border text-left text-sm font-bold transition-all ${
-                              wizardAnswers[wizardQuestions[wizardStep].key as keyof typeof wizardAnswers] === opt
-                                ? 'bg-indigo-600 text-white border-indigo-600 shadow-lg'
-                                : 'bg-slate-50 text-slate-600 border-slate-100 hover:border-slate-200'
-                            }`}
-                          >
-                            {opt}
-                          </button>
-                        ))}
-                      </div>
-                    ) : (
-                      <textarea
-                        className="w-full p-5 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-bold outline-none focus:border-indigo-600 focus:bg-white transition-all min-h-[120px]"
-                        placeholder={wizardQuestions[wizardStep].placeholder}
-                        value={wizardAnswers.preference}
-                        onChange={e => setWizardAnswers(prev => ({ ...prev, preference: e.target.value }))}
-                      />
-                    )}
+              {wizardStep === 1 && (
+                <div className="space-y-6 animate-in fade-in slide-in-from-right-4">
+                  <h4 className="text-xl font-black text-slate-800 leading-tight">어떤 투자 스타일을 선호하시나요?</h4>
+                  <div className="grid grid-cols-1 gap-3">
+                    {[
+                      { label: '안정형', desc: '원금 손실을 최소화하고 예적금보다 조금 높은 수익을 원함', val: 'CONSERVATIVE' },
+                      { label: '중립형', desc: '적절한 위험을 감수하며 예적금 대비 의미 있는 수익을 원함', val: 'BALANCED' },
+                      { label: '공격형', desc: '높은 수익을 위해 일시적인 자산 가치 하락을 감수할 수 있음', val: 'AGGRESSIVE' }
+                    ].map(risk => (
+                      <button key={risk.val} onClick={() => { setWizardAnswers({...wizardAnswers, risk: risk.val}); setWizardStep(2); }} className="w-full p-5 text-left bg-slate-50 hover:bg-indigo-50 border border-slate-100 hover:border-indigo-200 rounded-2xl transition-all group">
+                        <p className="font-black text-sm text-slate-800 mb-1">{risk.label}</p>
+                        <p className="text-[11px] font-bold text-slate-400 group-hover:text-indigo-400">{risk.desc}</p>
+                      </button>
+                    ))}
                   </div>
+                  <button onClick={() => setWizardStep(0)} className="flex items-center gap-1 text-xs font-black text-slate-300 mt-4"><ChevronLeft size={16} /> 이전으로</button>
+                </div>
+              )}
 
-                  <div className="pt-4">
-                    <button
-                      onClick={handleWizardNext}
-                      disabled={isWizardProcessing || (!wizardAnswers[wizardQuestions[wizardStep].key as keyof typeof wizardAnswers] && wizardStep < wizardQuestions.length - 1)}
-                      className="w-full py-5 bg-indigo-600 text-white rounded-2xl font-black text-sm shadow-xl active:scale-95 disabled:opacity-30 transition-all flex items-center justify-center gap-2"
+              {wizardStep === 2 && (
+                <div className="space-y-6 animate-in fade-in slide-in-from-right-4">
+                  <h4 className="text-xl font-black text-slate-800 leading-tight">가장 중요한 투자 목적은 무엇인가요?</h4>
+                  <div className="grid grid-cols-1 gap-3">
+                    {['노후 자금 마련', '내 집 마련', '자녀 교육 및 증여', '현금 흐름(배당) 창출', '단기 고수익 추구'].map(purpose => (
+                      <button key={purpose} onClick={() => { setWizardAnswers({...wizardAnswers, purpose}); setWizardStep(3); }} className="w-full p-5 text-left bg-slate-50 hover:bg-indigo-50 border border-slate-100 hover:border-indigo-200 rounded-2xl font-black text-sm text-slate-700 transition-all flex justify-between items-center group">
+                        {purpose} <ChevronRight size={18} className="text-slate-300 group-hover:text-indigo-600" />
+                      </button>
+                    ))}
+                  </div>
+                  <button onClick={() => setWizardStep(1)} className="flex items-center gap-1 text-xs font-black text-slate-300 mt-4"><ChevronLeft size={16} /> 이전으로</button>
+                </div>
+              )}
+
+              {wizardStep === 3 && (
+                <div className="space-y-6 animate-in fade-in slide-in-from-right-4">
+                  <h4 className="text-xl font-black text-slate-800 leading-tight">얼마 동안 투자할 계획이신가요?</h4>
+                  <div className="grid grid-cols-1 gap-3">
+                    {['1년 미만', '1~3년', '3~5년', '5~10년', '10년 이상'].map(horizon => (
+                      <button key={horizon} onClick={() => { setWizardAnswers({...wizardAnswers, horizon}); setWizardStep(4); }} className="w-full p-5 text-left bg-slate-50 hover:bg-indigo-50 border border-slate-100 hover:border-indigo-200 rounded-2xl font-black text-sm text-slate-700 transition-all flex justify-between items-center group">
+                        {horizon} <ChevronRight size={18} className="text-slate-300 group-hover:text-indigo-600" />
+                      </button>
+                    ))}
+                  </div>
+                  <button onClick={() => setWizardStep(2)} className="flex items-center gap-1 text-xs font-black text-slate-300 mt-4"><ChevronLeft size={16} /> 이전으로</button>
+                </div>
+              )}
+
+              {wizardStep === 4 && (
+                <div className="space-y-6 animate-in fade-in slide-in-from-right-4">
+                  <h4 className="text-xl font-black text-slate-800 leading-tight">특별히 선호하는 자산군이 있나요?</h4>
+                  <div className="grid grid-cols-1 gap-3">
+                    {['국내 주식 위주', '미국 등 해외 주식 위주', '채권 및 배당주 위주', '상관 없음 (AI 최적화)'].map(pref => (
+                      <button key={pref} onClick={() => { setWizardAnswers({...wizardAnswers, preference: pref}); setWizardStep(5); }} className="w-full p-5 text-left bg-slate-50 hover:bg-indigo-50 border border-slate-100 hover:border-indigo-200 rounded-2xl font-black text-sm text-slate-700 transition-all flex justify-between items-center group">
+                        {pref} <ChevronRight size={18} className="text-slate-300 group-hover:text-indigo-600" />
+                      </button>
+                    ))}
+                  </div>
+                  <button onClick={() => setWizardStep(3)} className="flex items-center gap-1 text-xs font-black text-slate-300 mt-4"><ChevronLeft size={16} /> 이전으로</button>
+                </div>
+              )}
+
+              {wizardStep === 5 && (
+                <div className="space-y-6 animate-in fade-in slide-in-from-right-4">
+                  <div className="w-12 h-12 bg-indigo-50 text-indigo-600 rounded-xl flex items-center justify-center"><MessageSquare size={24} /></div>
+                  <h4 className="text-xl font-black text-slate-800 leading-tight">AI에게 전달할 추가 요청 사항이 있나요?</h4>
+                  <p className="text-xs font-bold text-slate-400">구체적으로 입력할수록 더 정교한 자산 관리가 가능합니다. (건너뛰기 가능)</p>
+                  
+                  <textarea 
+                    value={wizardAnswers.customRequest}
+                    onChange={(e) => setWizardAnswers({...wizardAnswers, customRequest: e.target.value})}
+                    placeholder="예: 배당주 위주로 포트폴리오를 구성해줘, 기술주 비중은 30% 이하로 유지하고 싶어, 환경 친화적 기업(ESG)에 투자하고 싶어 등..."
+                    className="w-full h-40 p-5 bg-slate-50 border border-slate-200 rounded-[1.5rem] text-sm font-bold text-slate-700 outline-none focus:border-indigo-500 focus:bg-white transition-all resize-none"
+                  />
+                  
+                  <div className="flex flex-col gap-3 pt-2">
+                    <button 
+                      onClick={handleCompleteGoalWizard}
+                      className="w-full py-5 bg-indigo-600 text-white rounded-2xl font-black text-base shadow-xl active:scale-95 transition-all flex items-center justify-center gap-2"
                     >
-                      {isWizardProcessing ? <Loader2 size={18} className="animate-spin" /> : null}
-                      {wizardStep === wizardQuestions.length - 1 ? '지침 생성하기' : '다음 단계로'}
+                      <CheckCircle2 size={20} /> 설정 완료
                     </button>
+                    <button onClick={() => setWizardStep(4)} className="flex items-center gap-1 text-xs font-black text-slate-300 justify-center"><ChevronLeft size={16} /> 이전으로</button>
                   </div>
                 </div>
-              ) : (
-                <div className="space-y-8 animate-in zoom-in-95">
-                  <div className="p-6 bg-indigo-50 border border-indigo-100 rounded-[2rem] text-center">
-                    <div className="w-16 h-16 bg-white rounded-full flex items-center justify-center mx-auto mb-4 shadow-sm border border-indigo-50 text-indigo-600">
-                      <Target size={32} />
-                    </div>
-                    <p className="text-[10px] font-black text-indigo-400 uppercase tracking-widest mb-1">Generated Goal</p>
-                    <h4 className="text-xl font-black text-indigo-900">{suggestedGoal.goal}</h4>
-                  </div>
+              )}
 
-                  <div className="space-y-4">
-                    <h5 className="text-xs font-black text-slate-400 uppercase tracking-widest px-1">AI 지침 프리뷰</h5>
-                    <div className="p-6 bg-slate-900 text-slate-300 rounded-[2rem] text-sm font-medium leading-relaxed italic">
-                      "{suggestedGoal.prompt}"
-                    </div>
+              {isWizardProcessing && (
+                <div className="absolute inset-0 bg-white/90 backdrop-blur-sm z-[310] flex flex-col items-center justify-center p-8 text-center animate-in fade-in">
+                  <div className="w-20 h-20 bg-indigo-600 rounded-3xl flex items-center justify-center text-white mb-6 shadow-2xl shadow-indigo-200">
+                    <Sparkles size={40} className="animate-pulse" />
                   </div>
-
-                  <div className="flex gap-3 pt-4">
-                    <button
-                      onClick={() => setSuggestedGoal(null)}
-                      className="flex-1 py-5 bg-slate-100 text-slate-600 rounded-2xl font-black text-sm"
-                    >
-                      재시도
-                    </button>
-                    <button
-                      onClick={saveGoalSetting}
-                      className="flex-[2] py-5 bg-indigo-600 text-white rounded-2xl font-black text-sm shadow-xl flex items-center justify-center gap-2"
-                    >
-                      <Check size={18} /> 목표로 설정
-                    </button>
+                  <h4 className="text-xl font-black text-slate-800 mb-2">AI가 투자 가이드를 생성 중입니다</h4>
+                  <p className="text-sm font-bold text-slate-400">입력하신 정보와 요청 사항을 바탕으로 가장 스마트한 관리 전략을 설계하고 있습니다. 잠시만 기다려주세요.</p>
+                  <div className="mt-10 flex gap-2">
+                    <div className="w-2 h-2 bg-indigo-600 rounded-full animate-bounce" style={{animationDelay: '0ms'}}></div>
+                    <div className="w-2 h-2 bg-indigo-600 rounded-full animate-bounce" style={{animationDelay: '150ms'}}></div>
+                    <div className="w-2 h-2 bg-indigo-600 rounded-full animate-bounce" style={{animationDelay: '300ms'}}></div>
                   </div>
                 </div>
               )}
@@ -524,213 +442,64 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({
         </div>
       )}
 
-      <section ref={researchSectionRef} className="space-y-6 pt-12 border-t border-slate-100">
-        <div className="flex items-center justify-between px-1">
-          <div className="flex items-center gap-2.5">
-            <Search size={22} className="text-indigo-600" />
-            <h4 className="font-black text-slate-800 text-lg">인텔리전스 종목 리서치</h4>
-          </div>
-          <div className="px-2 py-1 bg-indigo-50 text-indigo-600 rounded-md text-[9px] font-black uppercase tracking-widest">Powered by Gemini 3</div>
-        </div>
-        
-        <form onSubmit={(e) => { e.preventDefault(); handleDeepDiveSearch(); }} className="relative group">
-          <div className="absolute inset-0 bg-indigo-500/10 rounded-[2rem] blur-xl opacity-0 group-focus-within:opacity-100 transition-opacity"></div>
-          <input 
-            type="text"
-            value={stockQuery}
-            onChange={(e) => setStockQuery(e.target.value)}
-            placeholder="심층 분석할 종목명을 입력하세요 (예: 엔비디아, TQQQ...)"
-            className="w-full pl-6 pr-36 py-6 bg-white border-2 border-slate-100 rounded-[2.2rem] shadow-sm text-sm font-bold focus:ring-0 focus:border-indigo-600 outline-none transition-all placeholder:text-slate-300 relative z-10"
-          />
-          <button 
-            type="submit"
-            disabled={searchLoading || !stockQuery.trim()}
-            className="absolute right-3 top-3 bottom-3 bg-indigo-600 text-white px-7 rounded-[1.8rem] text-[11px] font-black flex items-center gap-2 hover:bg-indigo-700 disabled:bg-slate-200 transition-all shadow-lg shadow-indigo-100 active:scale-95 z-20"
-          >
-            {searchLoading ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
-            분석 요청
-          </button>
-        </form>
-
-        {searchLoading && (
-          <div className="py-20 text-center space-y-5 animate-in fade-in duration-500">
-            <div className="relative w-16 h-16 mx-auto">
-              <div className="absolute inset-0 border-4 border-indigo-100 rounded-full"></div>
-              <div className="absolute inset-0 border-4 border-indigo-600 rounded-full border-t-transparent animate-spin"></div>
-              <Search size={24} className="absolute inset-0 m-auto text-indigo-600 animate-pulse" />
+      {isSavedModalOpen && (
+        <div className="fixed inset-0 z-[250] flex items-end sm:items-center justify-center p-0 sm:p-4">
+          <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={() => setIsSavedModalOpen(false)}></div>
+          <div className="relative bg-[#F4F7FB] w-full max-w-lg rounded-t-[2.5rem] sm:rounded-[2.5rem] shadow-2xl overflow-hidden animate-in slide-in-from-bottom duration-300 flex flex-col max-h-[90dvh]">
+            <div className="px-8 pt-8 pb-4 flex justify-between items-center bg-white border-b border-slate-100 shrink-0">
+              <h3 className="text-2xl font-black text-slate-800">전략 보관함</h3>
+              <button onClick={() => setIsSavedModalOpen(false)} className="p-2 text-slate-400"><X size={20}/></button>
             </div>
-            <div>
-              <p className="text-sm font-black text-slate-800">시장 및 종목 리포트 생성 중</p>
-              <p className="text-[10px] text-slate-400 font-bold mt-1 uppercase tracking-widest">Searching Global Financial Data...</p>
-            </div>
-          </div>
-        )}
-
-        {stockDeepDive && !searchLoading && (
-          <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-2xl mt-8 animate-in slide-in-from-bottom-8 duration-700 relative overflow-hidden group/report">
-            {/* Report Header Accent */}
-            <div className="h-2 w-full bg-indigo-600"></div>
-            
-            <div className="p-8 space-y-8 relative z-10">
-              <div className="flex flex-col gap-6">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <div className="flex items-center gap-2 mb-2">
-                      <span className="px-2 py-0.5 bg-indigo-50 text-indigo-600 rounded text-[9px] font-black uppercase tracking-widest border border-indigo-100">AI Intelligence Insight</span>
+            <div className="p-6 overflow-y-auto space-y-4">
+              {savedStrategies.map(saved => (
+                <div key={saved.id} className="p-5 bg-white border border-slate-100 rounded-[2.2rem] shadow-sm relative group cursor-pointer hover:border-indigo-200 transition-all" onClick={() => handleLoadSavedItem(saved)}>
+                  <div className="flex justify-between items-start">
+                    <div className="flex-1">
+                       <div className="flex items-center gap-2 mb-3">
+                         <span className={`px-2.5 py-1 rounded-lg text-[9px] font-black uppercase ${saved.type === 'DIAGNOSIS' ? 'bg-blue-50 text-blue-600' : 'bg-indigo-50 text-indigo-600'}`}>
+                           {saved.type === 'DIAGNOSIS' ? '진단 리포트' : '통합 전략'}
+                         </span>
+                         <div className="flex gap-1">
+                           {/* Fix: Wrapped Lucide icons in spans with title attributes to fix type error where title is not accepted directly on the icon component */}
+                           {saved.diagnosis && <span title="진단 포함"><FileText size={10} className="text-slate-400" /></span>}
+                           {saved.strategy && <span title="전략 포함"><ClipboardCheck size={10} className="text-indigo-400" /></span>}
+                         </div>
+                       </div>
+                       <h4 className="font-black text-slate-800 text-sm mb-2 leading-tight">{saved.name}</h4>
+                       <p className="text-[10px] text-slate-400 font-bold flex items-center gap-1">
+                         <Calendar size={10} /> {new Date(saved.createdAt).toLocaleDateString()}
+                       </p>
                     </div>
-                    <h5 className="text-3xl font-black text-slate-900 tracking-tight leading-none uppercase">{stockQuery} 심층 분석</h5>
-                  </div>
-                  <div className="w-14 h-14 bg-indigo-50 rounded-2xl flex items-center justify-center text-indigo-600 shadow-inner">
-                    <FileText size={28} />
+                    <button onClick={(e) => { e.stopPropagation(); onDeleteStrategy(saved.id); }} className="p-2 text-slate-300 hover:text-rose-500 transition-colors"><Trash2 size={16} /></button>
                   </div>
                 </div>
-
-                {/* Report Meta Stats */}
-                <div className="flex items-center gap-4 py-4 border-y border-slate-50 overflow-x-auto no-scrollbar">
-                  <div className="flex items-center gap-1.5 shrink-0">
-                    <Clock size={14} className="text-slate-400" />
-                    <span className="text-[11px] font-bold text-slate-500 uppercase tracking-tight">읽기 시간: 3분</span>
-                  </div>
-                  <div className="w-1 h-1 bg-slate-200 rounded-full shrink-0"></div>
-                  <div className="flex items-center gap-1.5 shrink-0">
-                    <ShieldAlert size={14} className="text-emerald-500" />
-                    <span className="text-[11px] font-bold text-slate-500 uppercase tracking-tight">신뢰도: 매우 높음</span>
-                  </div>
-                  <div className="w-1 h-1 bg-slate-200 rounded-full shrink-0"></div>
-                  <div className="flex items-center gap-1.5 shrink-0">
-                    <Globe size={14} className="text-slate-400" />
-                    <span className="text-[11px] font-bold text-slate-500 uppercase tracking-tight">글로벌 마켓 통합</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Main Report Content with Premium Styles */}
-              <div className="relative">
-                <Quote className="absolute -top-4 -left-4 text-indigo-50/50 w-16 h-16 -z-10" />
-                
-                {/* Visual Summary Card */}
-                <div className="bg-slate-50 rounded-3xl p-6 border border-slate-100 mb-8">
-                   <div className="flex items-center gap-2 mb-3">
-                     <Target size={16} className="text-indigo-600" />
-                     <span className="text-[11px] font-black text-slate-400 uppercase tracking-widest">Executive Summary</span>
-                   </div>
-                   <p className="text-sm font-bold text-slate-700 leading-relaxed italic">
-                     이 분석 리포트는 실시간 거시 경제 데이터와 {stockQuery}의 고유 펀더멘털을 결합하여 도출되었습니다. IRP 및 연금 계좌에서의 운용 적합성을 중점적으로 다룹니다.
-                   </p>
-                </div>
-
-                <div className="prose prose-slate prose-sm max-w-none 
-                  prose-p:text-slate-700 prose-p:leading-[1.8] prose-p:text-[15px] prose-p:mb-6
-                  prose-strong:text-indigo-700 prose-strong:font-black
-                  prose-headings:text-slate-900 prose-headings:font-black prose-headings:mb-4 prose-headings:mt-12
-                  prose-h1:text-2xl prose-h2:text-xl prose-h3:text-lg
-                  prose-li:text-slate-700 prose-li:my-2 prose-li:text-[15px]
-                  prose-ul:my-8 prose-ul:list-disc prose-ul:pl-6
-                  prose-ol:my-8 prose-ol:list-decimal prose-ol:pl-6
-                  prose-blockquote:border-l-4 prose-blockquote:border-indigo-100 prose-blockquote:pl-6 prose-blockquote:italic prose-blockquote:text-slate-500 prose-blockquote:bg-indigo-50/20 prose-blockquote:py-2
-                  prose-hr:border-slate-100 prose-hr:my-10">
-                  <ReactMarkdown>{stockDeepDive?.text || ""}</ReactMarkdown>
-                </div>
-              </div>
-
-              {/* Collapsed Sources List */}
-              {stockDeepDive?.sources && stockDeepDive.sources.length > 0 && (
-                <div className="pt-8 border-t border-slate-100">
-                  <button 
-                    onClick={() => setShowSources(!showSources)}
-                    className="flex items-center justify-between w-full px-5 py-4 bg-slate-50 rounded-2xl hover:bg-indigo-50 transition-colors group/sourcebtn border border-slate-100"
-                  >
-                    <div className="flex items-center gap-2.5">
-                      <div className="p-1.5 bg-white rounded-lg shadow-sm">
-                        <Globe size={14} className="text-slate-400 group-hover/sourcebtn:text-indigo-600" />
-                      </div>
-                      <h6 className="text-[12px] font-black text-slate-500 uppercase tracking-[0.05em] group-hover/sourcebtn:text-indigo-900">
-                        데이터 참조 소스 ({stockDeepDive.sources.length})
-                      </h6>
-                    </div>
-                    <div className={`transition-transform duration-300 ${showSources ? 'rotate-180' : ''}`}>
-                      <ChevronDown size={18} className="text-slate-400" />
-                    </div>
-                  </button>
-
-                  {showSources && (
-                    <div className="flex flex-col gap-2 mt-4 animate-in fade-in slide-in-from-top-2 duration-300">
-                      {stockDeepDive.sources.map((src, i: number) => (
-                        <a 
-                          key={i} 
-                          href={src.uri} 
-                          target="_blank" 
-                          rel="noopener noreferrer"
-                          className="flex items-center justify-between px-5 py-4 bg-white border border-slate-100 rounded-2xl text-[12px] font-bold text-slate-600 hover:bg-indigo-50 hover:text-indigo-600 hover:border-indigo-100 transition-all shadow-sm group/srclink"
-                        >
-                          <span className="truncate pr-4">{src.title}</span>
-                          <ExternalLink size={14} className="text-slate-300 group-hover/srclink:text-indigo-400 shrink-0" />
-                        </a>
-                      ))}
-                    </div>
-                  )}
+              ))}
+              {savedStrategies.length === 0 && (
+                <div className="text-center py-20">
+                  <BookOpen size={48} className="mx-auto text-slate-100 mb-4" />
+                  <p className="text-slate-300 font-bold">보관된 전략이 없습니다.</p>
                 </div>
               )}
-              
-              <div className="pt-10 flex flex-col items-center gap-4">
-                <div className="w-12 h-1 bg-slate-100 rounded-full"></div>
-                <p className="text-[10px] font-bold text-slate-300 italic text-center max-w-xs leading-relaxed">
-                  본 인텔리전스 리포트는 실시간 웹 데이터를 기반으로 생성된 AI 통찰입니다. 금융 거래 전 반드시 전문가와 상담하십시오.
-                </p>
-              </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      <section ref={researchSectionRef} className="space-y-6 pt-12 border-t border-slate-200">
+        <div className="flex items-center gap-2.5 px-1"><Search size={22} className="text-indigo-600" /><h4 className="font-black text-slate-800 text-lg">인텔리전스 종목 리서치</h4></div>
+        <form onSubmit={(e) => { e.preventDefault(); handleDeepDiveSearch(); }} className="relative">
+          <input type="text" value={stockQuery} onChange={(e) => setStockQuery(e.target.value)} placeholder="분석할 종목명 (예: 엔비디아...)" className="w-full pl-6 pr-36 py-6 bg-white border-2 border-slate-100 rounded-[2.2rem] shadow-sm text-sm font-bold outline-none transition-all" />
+          <button type="submit" disabled={searchLoading || !stockQuery.trim()} className="absolute right-3 top-3 bottom-3 bg-indigo-600 text-white px-7 rounded-[1.8rem] text-[11px] font-black flex items-center gap-2 active:scale-95 shadow-lg transition-all">
+            {searchLoading ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}분석
+          </button>
+        </form>
+        {stockDeepDive && (
+          <div className="bg-white p-7 rounded-[2.5rem] border border-slate-100 shadow-sm space-y-4 animate-in fade-in">
+             <div className="flex items-center gap-2 mb-4"><div className="p-2 bg-indigo-50 text-indigo-600 rounded-xl"><FileSearch size={18} /></div><h4 className="text-sm font-black text-slate-800">'{stockQuery}' 심층 분석</h4></div>
+             <div className="prose prose-slate prose-sm max-w-none text-slate-600 leading-relaxed"><ReactMarkdown>{stockDeepDive.text}</ReactMarkdown></div>
           </div>
         )}
       </section>
-
-      {/* Saved Strategies Modal */}
-      {isSavedModalOpen && (
-        <div className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center p-0 sm:p-4">
-          <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={() => setIsSavedModalOpen(false)}></div>
-          <div className="relative bg-white w-full max-w-lg rounded-t-[2.5rem] sm:rounded-[2.5rem] shadow-2xl overflow-hidden animate-in slide-in-from-bottom duration-300 flex flex-col max-h-[90dvh]">
-            <div className="px-8 pt-8 pb-4 flex justify-between items-center shrink-0">
-              <div>
-                <h3 className="text-2xl font-black text-slate-800">전략 보관함</h3>
-                <p className="text-[10px] font-black text-indigo-600 uppercase tracking-widest mt-0.5">Saved Strategies</p>
-              </div>
-              <button onClick={() => setIsSavedModalOpen(false)} className="p-2 bg-slate-50 rounded-full text-slate-400 hover:bg-slate-100"><ArrowRight size={20}/></button>
-            </div>
-
-            <div className="p-6 overflow-y-auto no-scrollbar pb-44 space-y-4 pb-safe">
-              {savedStrategies.length === 0 ? (
-                <div className="py-20 text-center opacity-40">
-                  <Bookmark size={48} className="mx-auto mb-4 text-slate-400" />
-                  <p className="font-bold text-slate-500">저장된 전략이 없습니다.</p>
-                </div>
-              ) : (
-                savedStrategies.map(saved => (
-                  <div key={saved.id} className="p-5 bg-white border border-slate-100 rounded-[2rem] shadow-sm relative group hover:border-indigo-100 transition-all">
-                    <div className="flex justify-between items-start mb-3">
-                      <div className="cursor-pointer flex-1" onClick={() => handleLoadStrategy(saved)}>
-                         <div className="flex items-center gap-2 mb-1">
-                           <span className="px-2 py-0.5 bg-indigo-50 text-indigo-600 rounded-md text-[9px] font-black uppercase">
-                             {saved.strategy.riskLevel} Risk
-                           </span>
-                           <span className="flex items-center gap-1 text-[10px] font-bold text-slate-300">
-                             <Calendar size={10} /> {new Date(saved.createdAt).toLocaleDateString()}
-                           </span>
-                         </div>
-                         <h4 className="font-black text-slate-800 text-sm leading-tight group-hover:text-indigo-600 transition-colors">{saved.strategy.name}</h4>
-                      </div>
-                      <button 
-                        onClick={() => onDeleteStrategy(saved.id)}
-                        className="p-2 text-slate-300 hover:text-rose-500 hover:bg-rose-50 rounded-xl transition-all"
-                      >
-                        <Trash2 size={16} />
-                      </button>
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 };

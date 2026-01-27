@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { AreaChart, Area, ResponsiveContainer } from 'recharts';
-import { getAssetHistory } from '../services/geminiService';
+import { getAssetHistory, globalRequestQueue } from '../services/geminiService';
 import { Loader2 } from 'lucide-react';
 
 interface AssetSparklineProps {
@@ -19,7 +19,6 @@ export const AssetSparkline: React.FC<AssetSparklineProps> = ({ ticker, name, is
   
   const lastFetchedTick = useRef<number>(-1);
 
-  // IntersectionObserver를 이용해 화면에 보일 때만 렌더링 준비
   useEffect(() => {
     const observer = new IntersectionObserver(
       ([entry]) => {
@@ -40,10 +39,6 @@ export const AssetSparkline: React.FC<AssetSparklineProps> = ({ ticker, name, is
 
     let isMounted = true;
     const fetchHistory = async () => {
-      // 429 에러 방지를 위해 여러 개의 스파크라인이 동시에 호출될 때 랜덤하게 0~5초 대기 (Stagger)
-      const staggerDelay = Math.random() * 5000;
-      await new Promise(r => setTimeout(r, staggerDelay));
-
       if (!isMounted) return;
 
       try {
@@ -58,7 +53,9 @@ export const AssetSparkline: React.FC<AssetSparklineProps> = ({ ticker, name, is
         }
 
         setLoading(true);
-        const points = await getAssetHistory(ticker || '', name);
+        
+        // globalRequestQueue를 사용하여 순차적으로 기록 호출 (429 방지)
+        const points = await globalRequestQueue.add(() => getAssetHistory(ticker || '', name));
         
         if (isMounted) {
           if (points && points.length > 0) {

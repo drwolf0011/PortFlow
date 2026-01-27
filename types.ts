@@ -86,6 +86,14 @@ export interface UserProfile {
   goalPrompt?: string;     // AI가 생성한 상세 지침 프롬프트
 }
 
+// --- Shared AI Types ---
+
+export interface DiagnosisResponse {
+  currentDiagnosis: string;
+  marketConditions: string;
+  sources: { title: string; uri: string }[];
+}
+
 // --- AI Strategy Types (Moved from geminiService) ---
 
 export interface ExecutionPlanItem {
@@ -119,7 +127,10 @@ export interface RebalancingStrategy {
 export interface SavedStrategy {
   id: string;
   createdAt: number;
-  strategy: RebalancingStrategy;
+  type: 'DIAGNOSIS' | 'STRATEGY';
+  name: string;
+  diagnosis?: DiagnosisResponse;
+  strategy?: RebalancingStrategy;
 }
 
 // --- Sync & App Data ---

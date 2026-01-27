@@ -1,13 +1,13 @@
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 /* Fix: Using wildcard import for react-router-dom to resolve named export errors in this environment */
 import * as ReactRouterDOM from 'react-router-dom';
 const { HashRouter, Routes, Route, Link, useLocation, useNavigate } = ReactRouterDOM;
 import { 
-  Home, Wallet, Cpu, PlusCircle, Settings,
-  CheckCircle2, LogOut, X,
-  History, Download, Upload, Database, ChevronRight,
-  Loader2, CloudCog, Cloud
+  Home, Wallet, LineChart, Cpu, PlusCircle, Settings,
+  RefreshCw, CheckCircle2, LogOut, RotateCcw, X,
+  AlertTriangle, History, Download, Upload, Trash2, Database, ChevronRight, Clock,
+  Globe, CreditCard, Loader2, CloudCog, Cloud
 } from 'lucide-react';
 import Dashboard from './components/Dashboard';
 import AssetList from './components/AssetList';
@@ -41,6 +41,7 @@ const NavLink: React.FC<{ to: string; icon: React.ReactNode; label: string }> = 
 
 const AppContent: React.FC = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // --- Data State ---
@@ -83,16 +84,19 @@ const AppContent: React.FC = () => {
     try {
       const saved = localStorage.getItem('portflow_saved_strategies');
       const parsed = saved ? JSON.parse(saved) : [];
+      
+      // 데이터 마이그레이션: 기존 데이터(strategy만 있는 경우)를 새로운 구조로 변환
       if (Array.isArray(parsed)) {
         return parsed.map((s: any) => {
           if (s.strategy && !s.type) {
+            // Legacy format detected
             return {
               id: s.id,
               createdAt: s.createdAt,
               type: 'STRATEGY',
               name: s.strategy.name || '저장된 전략',
               strategy: s.strategy,
-              diagnosis: s.diagnosis || undefined
+              diagnosis: undefined
             } as SavedStrategy;
           }
           return s as SavedStrategy;
@@ -222,7 +226,6 @@ const AppContent: React.FC = () => {
     diagnosis?: DiagnosisResponse, 
     strategy?: RebalancingStrategy 
   }) => {
-    // 저장 데이터 유효성 검사 강화
     if (data.type === 'STRATEGY' && (!data.strategy || !data.strategy.executionGroups)) {
       showToast("저장할 수 없는 전략 형식입니다.");
       return;
@@ -232,22 +235,17 @@ const AppContent: React.FC = () => {
       return;
     }
     
-    // 데이터 안전 복제
     const newSaved: SavedStrategy = { 
-      id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
+      id: Date.now().toString() + Math.random().toString(36).substr(2, 5),
       createdAt: Date.now(), 
       type: data.type,
-      name: data.name || (data.type === 'DIAGNOSIS' ? '자산 정밀 진단' : '통합 관리 전략'),
-      diagnosis: data.diagnosis ? JSON.parse(JSON.stringify(data.diagnosis)) : undefined,
-      strategy: data.strategy ? JSON.parse(JSON.stringify(data.strategy)) : undefined
+      name: data.name,
+      diagnosis: data.diagnosis && JSON.parse(JSON.stringify(data.diagnosis)), // Deep Copy
+      strategy: data.strategy && JSON.parse(JSON.stringify(data.strategy)) // Deep Copy
     };
     
     setSavedStrategies(prev => [newSaved, ...prev]);
-    
-    const msg = data.type === 'DIAGNOSIS' 
-      ? "진단 리포트가 저장되었습니다." 
-      : (data.diagnosis ? "통합 리포트(진단+전략)가 저장되었습니다." : "전략 리포트가 저장되었습니다.");
-    showToast(msg);
+    showToast(data.type === 'DIAGNOSIS' ? "진단 결과가 보관함에 저장되었습니다." : "전략이 보관함에 저장되었습니다.");
   }, [showToast]);
 
   const handleDeleteStrategy = useCallback((id: string) => {
@@ -418,27 +416,39 @@ const AppContent: React.FC = () => {
     }
     setIsUpdatingPrices(true);
     try {
+      // 최적화된 시세 업데이트 함수 호출
       const { updatedAssets, exchangeRate: newRate } = await updateAssetPrices(assets);
+      
       let finalRate = dynamicExchangeRate;
       if (newRate) {
         setDynamicExchangeRate(newRate);
         finalRate = newRate;
         localStorage.setItem('portflow_exchange_rate', newRate.toString());
       }
+
       setAssets(updatedAssets);
+
       const totalVal = updatedAssets.reduce((acc, cur) => {
         const mult = cur.currency === 'USD' ? finalRate : 1;
         return acc + (cur.currentPrice * cur.quantity * mult);
       }, 0);
+      
       const today = new Date().toLocaleDateString('en-CA');
       setHistory(prev => {
         const newHistory = prev.filter(h => h.date !== today);
         return [...newHistory, { date: today, value: Math.floor(totalVal) }].slice(-52);
       });
+
       setLastUpdated(new Date().toLocaleString());
+      
       const count = updatedAssets.filter(a => a.type !== AssetType.CASH).length;
-      showToast(`${count}개 자산 시세가 업데이트되었습니다.`);
+      if (newRate) {
+        showToast(`${count}개 자산 시세 및 환율(${newRate}원) 갱신 완료`);
+      } else {
+        showToast(`${count}개 자산 시세가 업데이트되었습니다.`);
+      }
     } catch (e) { 
+      console.error(e);
       showToast("시세 업데이트 중 오류 발생"); 
     } finally { 
       setIsUpdatingPrices(false); 
@@ -448,6 +458,7 @@ const AppContent: React.FC = () => {
   const handleDeleteAsset = (id: string) => {
     const asset = assets.find(a => a.id === id);
     if (!asset) return;
+
     if (window.confirm(`'${asset.name}' 자산과 관련된 모든 거래 내역이 함께 삭제됩니다. 계속하시겠습니까?`)) {
       const newTransactions = transactions.filter(t => 
         !(t.name === asset.name && t.institution === asset.institution && t.accountId === asset.accountId)
@@ -463,6 +474,7 @@ const AppContent: React.FC = () => {
       const oldName = editingAsset.name;
       const oldInst = editingAsset.institution;
       const oldAcc = editingAsset.accountId;
+
       const newTxs = transactions.map(t => {
         if (t.name === oldName && t.institution === oldInst && t.accountId === oldAcc) {
           return { ...t, name: asset.name, institution: asset.institution, accountId: asset.accountId, assetType: asset.type, currency: asset.currency };
@@ -486,16 +498,22 @@ const AppContent: React.FC = () => {
         currency: asset.currency,
         exchangeRate: asset.currency === 'USD' ? dynamicExchangeRate : 1
       };
+      
       const newTxs = [initialTx, ...transactions];
       setTransactions(newTxs);
       setAssets(recalculateAssets(newTxs, [...assets, asset]));
-      showToast("새 자산이 추가되었습니다.");
+      showToast("새 자산이 거래 내역과 함께 추가되었습니다.");
     }
     setEditingAsset(undefined); setIsManualModalOpen(false);
   };
 
   const handleTransactionSave = (tx: Transaction) => {
-    const newTransactions = editingTransaction ? transactions.map(t => t.id === tx.id ? tx : t) : [tx, ...transactions];
+    let newTransactions;
+    if (editingTransaction) {
+      newTransactions = transactions.map(t => t.id === tx.id ? tx : t);
+    } else {
+      newTransactions = [tx, ...transactions];
+    }
     setTransactions(newTransactions);
     setAssets(recalculateAssets(newTransactions, assets));
     showToast(editingTransaction ? "거래가 수정되었습니다." : "거래가 기록되었습니다.");
@@ -516,11 +534,22 @@ const AppContent: React.FC = () => {
   };
 
   const handleLoginSuccess = (userProfile: any) => {
-    setUser({ ...user, ...userProfile });
+    const updatedUser = { ...user, ...userProfile };
+    setUser(updatedUser);
     setIsAuthenticated(true);
-    if (userProfile.cloudSync?.apiKey) {
-      setSyncConfig(prev => ({ ...prev, apiKey: userProfile.cloudSync.apiKey, binId: userProfile.cloudSync.binId, autoSync: true }));
+
+    if (updatedUser.cloudSync && updatedUser.cloudSync.apiKey) {
+      setSyncConfig(prev => ({
+        ...prev,
+        apiKey: updatedUser.cloudSync.apiKey,
+        binId: updatedUser.cloudSync.binId,
+        autoSync: true
+      }));
+      showToast("저장된 클라우드 정보를 복원하고 데이터를 불러옵니다...");
       setTimeout(() => handleSync('SMART'), 800);
+    } else if (syncConfig.apiKey && syncConfig.binId) {
+      showToast("클라우드 데이터를 불러오고 있습니다...");
+      setTimeout(() => handleSync('SMART'), 600);
     }
   };
 
@@ -551,7 +580,7 @@ const AppContent: React.FC = () => {
         <Routes>
           <Route path="/" element={<Dashboard assets={assets} accounts={accounts} transactions={transactions} user={user} onRefresh={handleUpdatePrices} isUpdating={isUpdatingPrices} lastUpdated={lastUpdated} history={history} exchangeRate={dynamicExchangeRate} />} />
           <Route path="/assets" element={<AssetList assets={assets} setAssets={setAssets} onAddAsset={() => { setEditingAsset(undefined); setIsManualModalOpen(true); }} onEditAsset={(a) => { setEditingAsset(a); setIsManualModalOpen(true); }} onDeleteAsset={handleDeleteAsset} onSync={handleLocalSync} onRefreshPrices={handleUpdatePrices} isRefreshing={isUpdatingPrices} exchangeRate={dynamicExchangeRate} accounts={accounts} />} />
-          <Route path="/advisor" element={<AIAdvisor assets={assets} accounts={accounts} onApplyRebalancing={(inst) => showToast(`${inst} 리밸런싱 전송`)} exchangeRate={dynamicExchangeRate} onSaveStrategy={handleSaveStrategy} savedStrategies={savedStrategies} onDeleteStrategy={handleDeleteStrategy} user={user} onUpdateUser={handleUpdateUser} />} />
+          <Route path="/advisor" element={<AIAdvisor assets={assets} accounts={accounts} onApplyRebalancing={(inst) => showToast(`${inst} 리밸런싱 시뮬레이션 전송`)} exchangeRate={dynamicExchangeRate} onSaveStrategy={handleSaveStrategy} savedStrategies={savedStrategies} onDeleteStrategy={handleDeleteStrategy} user={user} onUpdateUser={handleUpdateUser} />} />
           <Route path="/history" element={<TransactionHistory transactions={transactions} accounts={accounts} onDelete={handleDeleteTransaction} onEdit={(tx) => { setEditingTransaction(tx); setIsTransactionModalOpen(true); }} onUpdate={handleUpdateTransactions} exchangeRate={dynamicExchangeRate} />} />
           <Route path="/analytics" element={<AnalyticsView history={history} assets={assets} exchangeRate={dynamicExchangeRate} />} />
           <Route path="/accounts" element={<AccountManager accounts={accounts} setAccounts={setAccounts} assets={assets} exchangeRate={dynamicExchangeRate} />} />
@@ -597,7 +626,39 @@ const AppContent: React.FC = () => {
               <section>
                 <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4">Account</h3>
                 <div className="space-y-3">
-                  <button onClick={handleLogout} className="w-full p-4 bg-white border border-slate-200 rounded-2xl flex items-center justify-between group hover:bg-rose-50 hover:border-rose-100 transition-all"><div className="flex items-center gap-3"><div className="p-2 bg-slate-50 rounded-xl text-slate-400 group-hover:bg-rose-100 group-hover:text-rose-500 transition-colors"><LogOut size={18} /></div><span className="text-xs font-bold text-slate-700 group-hover:text-rose-600">로그아웃</span></div><ChevronRight size={16} className="text-slate-300 group-hover:text-rose-400" /></button>
+                  <button 
+                    onClick={handleLogout}
+                    className="w-full p-4 bg-white border border-slate-200 rounded-2xl flex items-center justify-between group hover:bg-rose-50 hover:border-rose-100 transition-all"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="p-2 bg-slate-50 rounded-xl text-slate-400 group-hover:bg-rose-100 group-hover:text-rose-500 transition-colors">
+                        <LogOut size={18} />
+                      </div>
+                      <span className="text-xs font-bold text-slate-700 group-hover:text-rose-600">로그아웃</span>
+                    </div>
+                    <ChevronRight size={16} className="text-slate-300 group-hover:text-rose-400" />
+                  </button>
+                  
+                  <div className="p-4 bg-slate-50 border border-slate-100 rounded-2xl">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Database size={16} className="text-slate-400" />
+                      <span className="text-xs font-black text-slate-600">데이터 초기화</span>
+                    </div>
+                    <p className="text-[10px] text-slate-400 font-medium mb-3">
+                      기기에 저장된 모든 자산 및 설정 데이터를 영구적으로 삭제합니다.
+                    </p>
+                    <button 
+                      onClick={() => {
+                        if (window.confirm("정말로 모든 데이터를 삭제하고 초기화하시겠습니까?")) {
+                          localStorage.clear();
+                          window.location.reload();
+                        }
+                      }}
+                      className="w-full py-3 bg-white border border-slate-200 text-rose-500 rounded-xl text-[10px] font-black hover:bg-rose-50 hover:border-rose-100 transition-all"
+                    >
+                      모든 데이터 삭제
+                    </button>
+                  </div>
                 </div>
               </section>
             </div>
@@ -608,10 +669,12 @@ const AppContent: React.FC = () => {
   );
 };
 
-export default function App() {
+const App: React.FC = () => {
   return (
     <HashRouter>
       <AppContent />
     </HashRouter>
   );
-}
+};
+
+export default App;

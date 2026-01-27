@@ -3,12 +3,23 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
 
-// Register Service Worker for Mobile PWA
-if ('serviceWorker' in navigator) {
+// Register Service Worker only in compatible environments with matching origin
+if ('serviceWorker' in navigator && window.location.protocol === 'https:') {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('./sw.js')
-      .then(reg => console.log('SW registered'))
-      .catch(err => console.log('SW registration failed', err));
+    // Check if we are in a sandbox that might cause origin mismatch
+    const swPath = './sw.js';
+    navigator.serviceWorker.register(swPath)
+      .then(reg => {
+        // Success
+      })
+      .catch(err => {
+        // Silently handle origin mismatch in preview environments
+        if (err.name === 'SecurityError') {
+          console.log('PWA features disabled in this environment (Origin Mismatch)');
+        } else {
+          console.error('SW registration failed:', err);
+        }
+      });
   });
 }
 
