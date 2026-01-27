@@ -115,69 +115,6 @@ const AppContent: React.FC = () => {
     setTimeout(() => setToast(null), 3000);
   }, []);
 
-  // --- Transaction -> Asset Recalculation Logic ---
-  const recalculateAssets = useCallback((txs: Transaction[], currentAssets: Asset[]) => {
-    const groups: Record<string, Transaction[]> = {};
-    txs.forEach(t => {
-      const key = `${t.name}|${t.institution}|${t.accountId || 'none'}`;
-      if (!groups[key]) groups[key] = [];
-      groups[key].push(t);
-    });
-
-    const assetMetaMap: Record<string, Asset> = {};
-    currentAssets.forEach(a => {
-      assetMetaMap[`${a.name}|${a.institution}|${a.accountId || 'none'}`] = a;
-    });
-
-    const newAssets: Asset[] = [];
-
-    Object.entries(groups).forEach(([key, groupTxs]) => {
-      const meta = assetMetaMap[key];
-      const [name, inst, accId] = key.split('|');
-
-      let totalQty = 0;
-      let totalCostKRW = 0; 
-      let totalCostUSD = 0; 
-
-      const sortedTxs = [...groupTxs].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-
-      sortedTxs.forEach(tx => {
-        const effectiveRate = tx.currency === 'USD' ? (tx.exchangeRate || dynamicExchangeRate) : 1;
-        const txPriceKRW = tx.price * effectiveRate;
-        
-        if (tx.type === TransactionType.BUY) {
-          totalCostKRW += (tx.quantity * txPriceKRW);
-          totalCostUSD += (tx.quantity * tx.price);
-          totalQty += tx.quantity;
-        } else if (tx.type === TransactionType.SELL) {
-          const avgKRW = totalQty > 0 ? totalCostKRW / totalQty : 0;
-          const avgUSD = totalQty > 0 ? totalCostUSD / totalQty : 0;
-          totalQty = Math.max(0, totalQty - tx.quantity);
-          totalCostKRW = totalQty * avgKRW; 
-          totalCostUSD = totalQty * avgUSD;
-        }
-      });
-
-      if (totalQty > 0) {
-        newAssets.push({
-          id: meta?.id || Math.random().toString(36).substr(2, 9),
-          name,
-          institution: inst,
-          ticker: meta?.ticker || (sortedTxs[0].assetType === AssetType.STOCK ? name : undefined),
-          type: meta?.type || sortedTxs[0].assetType,
-          quantity: totalQty,
-          purchasePrice: totalCostUSD / totalQty,
-          purchasePriceKRW: totalCostKRW / totalQty,
-          currentPrice: meta?.currentPrice || sortedTxs[sortedTxs.length - 1].price,
-          currency: sortedTxs[0].currency,
-          accountId: accId === 'none' ? undefined : accId
-        });
-      }
-    });
-
-    return newAssets;
-  }, [dynamicExchangeRate]);
-
   // --- Persistence ---
   useEffect(() => { 
     localStorage.setItem('portflow_assets', JSON.stringify(assets));
@@ -196,10 +133,63 @@ const AppContent: React.FC = () => {
   useEffect(() => { localStorage.setItem('portflow_user', JSON.stringify(user)); }, [user]);
   useEffect(() => { localStorage.setItem('portflow_exchange_rate', dynamicExchangeRate.toString()); }, [dynamicExchangeRate]);
   useEffect(() => { localStorage.setItem('portflow_last_updated', lastUpdated); }, [lastUpdated]);
+  
   useEffect(() => { 
     localStorage.setItem('portflow_saved_strategies', JSON.stringify(savedStrategies));
-    setLocalUpdateTimestamp(Date.now());
   }, [savedStrategies]);
+
+  const recalculateAssets = useCallback((txs: Transaction[], currentAssets: Asset[]) => {
+    const groups: Record<string, Transaction[]> = {};
+    txs.forEach(t => {
+      const key = `${t.name}|${t.institution}|${t.accountId || 'none'}`;
+      if (!groups[key]) groups[key] = [];
+      groups[key].push(t);
+    });
+    const assetMetaMap: Record<string, Asset> = {};
+    currentAssets.forEach(a => {
+      assetMetaMap[`${a.name}|${a.institution}|${a.accountId || 'none'}`] = a;
+    });
+    const newAssets: Asset[] = [];
+    Object.entries(groups).forEach(([key, groupTxs]) => {
+      const meta = assetMetaMap[key];
+      const [name, inst, accId] = key.split('|');
+      let totalQty = 0;
+      let totalCostKRW = 0; 
+      let totalCostUSD = 0; 
+      const sortedTxs = [...groupTxs].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+      sortedTxs.forEach(tx => {
+        const effectiveRate = tx.currency === 'USD' ? (tx.exchangeRate || dynamicExchangeRate) : 1;
+        const txPriceKRW = tx.price * effectiveRate;
+        if (tx.type === TransactionType.BUY) {
+          totalCostKRW += (tx.quantity * txPriceKRW);
+          totalCostUSD += (tx.quantity * tx.price);
+          totalQty += tx.quantity;
+        } else if (tx.type === TransactionType.SELL) {
+          const avgKRW = totalQty > 0 ? totalCostKRW / totalQty : 0;
+          const avgUSD = totalQty > 0 ? totalCostUSD / totalQty : 0;
+          totalQty = Math.max(0, totalQty - tx.quantity);
+          totalCostKRW = totalQty * avgKRW; 
+          totalCostUSD = totalQty * avgUSD;
+        }
+      });
+      if (totalQty > 0) {
+        newAssets.push({
+          id: meta?.id || Math.random().toString(36).substr(2, 9),
+          name,
+          institution: inst,
+          ticker: meta?.ticker || (sortedTxs[0].assetType === AssetType.STOCK ? name : undefined),
+          type: meta?.type || sortedTxs[0].assetType,
+          quantity: totalQty,
+          purchasePrice: totalCostUSD / totalQty,
+          purchasePriceKRW: totalCostKRW / totalQty,
+          currentPrice: meta?.currentPrice || sortedTxs[sortedTxs.length - 1].price,
+          currency: sortedTxs[0].currency,
+          accountId: accId === 'none' ? undefined : accId
+        });
+      }
+    });
+    return newAssets;
+  }, [dynamicExchangeRate]);
 
   const getCurrentAppData = useCallback((): AppData => {
     return {
@@ -220,10 +210,10 @@ const AppContent: React.FC = () => {
     if (Array.isArray(data.accounts)) setAccounts([...data.accounts]);
     if (Array.isArray(data.history)) setHistory([...data.history]);
     
-    // 보관함 데이터 복구 로직 강화
-    const incomingStrategies = Array.isArray(data.savedStrategies) ? data.savedStrategies : [];
-    setSavedStrategies(incomingStrategies);
-    localStorage.setItem('portflow_saved_strategies', JSON.stringify(incomingStrategies));
+    if (Array.isArray(data.savedStrategies)) {
+      setSavedStrategies(data.savedStrategies);
+      localStorage.setItem('portflow_saved_strategies', JSON.stringify(data.savedStrategies));
+    }
 
     if (data.user) setUser({ ...data.user });
     if (data.lastUpdated) setLastUpdated(data.lastUpdated);
@@ -278,52 +268,120 @@ const AppContent: React.FC = () => {
     }
   }, [syncConfig, getCurrentAppData, applyAppData, showToast]);
 
-  const handleLocalSync = useCallback(() => {
-    const syncedAssets = recalculateAssets(transactions, assets);
-    setAssets(syncedAssets);
-    showToast("거래 내역을 바탕으로 자산 데이터가 동기화되었습니다.");
-  }, [transactions, assets, recalculateAssets, showToast]);
-
-  const handleCloudLogin = async () => {
-    if (!inputApiKey) return showToast("API Key를 입력해주세요.");
-    setIsSyncing(true);
-    try {
-      let binId = inputBinId;
-      if (!binId) {
-        binId = await createBin(inputApiKey, getCurrentAppData());
-        showToast("새 클라우드 저장소가 생성되었습니다.");
-      } else {
-        const cloudData = await readBin(inputApiKey, binId);
-        showToast("저장소 연결 성공!");
-        if (window.confirm("기존 클라우드 데이터를 불러오시겠습니까?")) {
-          applyAppData(cloudData);
-        }
-      }
-      const newConfig = { 
-        apiKey: inputApiKey, 
-        binId, 
-        lastSynced: new Date().toLocaleString(), 
-        autoSync: true,
-        lastSyncedDataTimestamp: localUpdateTimestamp 
-      };
-      setSyncConfig(newConfig);
-
-      setUser(prev => prev ? {
-        ...prev,
-        cloudSync: {
-          apiKey: inputApiKey,
-          binId: binId
-        }
-      } : null);
-
-      setInputApiKey(''); setInputBinId('');
-      showToast("클라우드 연동 정보가 프로필에 저장되었습니다.");
-    } catch (e: any) {
-      showToast(`연동 실패: ${e.message}`);
-    } finally {
-      setIsSyncing(false);
+  const handleUpdatePrices = useCallback(async () => {
+    if (assets.length === 0) {
+      showToast("갱신할 자산이 없습니다.");
+      return;
     }
-  };
+    setIsUpdatingPrices(true);
+    try {
+      const result = await updateAssetPrices(assets);
+      setAssets(result.updatedAssets);
+      if (result.exchangeRate) {
+        setDynamicExchangeRate(result.exchangeRate);
+      }
+      const now = new Date().toLocaleString();
+      setLastUpdated(now);
+      showToast("시세 및 환율 정보가 갱신되었습니다.");
+    } catch (e: any) {
+      console.error(e);
+      showToast(`시세 갱신 오류: ${e.message}`);
+    } finally {
+      setIsUpdatingPrices(false);
+    }
+  }, [assets, showToast]);
+
+  const handleSaveAIStrategy = useCallback((data: { 
+    type: 'DIAGNOSIS' | 'STRATEGY', 
+    name: string, 
+    diagnosis?: DiagnosisResponse, 
+    strategy?: RebalancingStrategy 
+  }) => {
+    try {
+      const newSaved: SavedStrategy = { 
+        id: Date.now().toString() + Math.random().toString(36).substr(2, 5),
+        createdAt: Date.now(), 
+        name: data.name,
+        diagnosis: data.diagnosis ? JSON.parse(JSON.stringify(data.diagnosis)) : undefined,
+        strategy: data.strategy ? JSON.parse(JSON.stringify(data.strategy)) : undefined  
+      };
+      
+      setSavedStrategies(prev => {
+        const next = [newSaved, ...prev];
+        localStorage.setItem('portflow_saved_strategies', JSON.stringify(next));
+        setLocalUpdateTimestamp(Date.now());
+        return next;
+      });
+      showToast("전략 보관함에 저장되었습니다.");
+    } catch (error: any) {
+      console.error("Save AI Strategy failed:", error);
+      showToast(`저장 실패: ${error.message || '알 수 없는 오류'}`);
+    }
+  }, [showToast]);
+
+  const handleDeleteAIStrategy = useCallback((id: string) => {
+    setSavedStrategies(prev => {
+      const next = prev.filter(s => s.id !== id);
+      localStorage.setItem('portflow_saved_strategies', JSON.stringify(next));
+      setLocalUpdateTimestamp(Date.now());
+      return next;
+    });
+    showToast("보관함에서 삭제되었습니다.");
+  }, [showToast]);
+
+  const handleSaveAsset = useCallback((asset: Asset) => {
+    setAssets(prev => {
+      const exists = prev.find(a => a.id === asset.id);
+      if (exists) {
+        return prev.map(a => a.id === asset.id ? asset : a);
+      }
+      return [...prev, asset];
+    });
+    setIsManualModalOpen(false);
+    setEditingAsset(undefined);
+    showToast("자산 정보가 저장되었습니다.");
+  }, [showToast]);
+
+  const handleSaveTransaction = useCallback((tx: Transaction) => {
+    setTransactions(prev => {
+      const exists = prev.find(t => t.id === tx.id);
+      let next;
+      if (exists) {
+        next = prev.map(t => t.id === tx.id ? tx : t);
+      } else {
+        next = [...prev, tx];
+      }
+      setAssets(recalculateAssets(next, assets));
+      return next;
+    });
+    setIsTransactionModalOpen(false);
+    setEditingTransaction(undefined);
+    showToast("거래 내역이 기록되었습니다.");
+  }, [assets, recalculateAssets, showToast]);
+
+  const handleDeleteAsset = useCallback((id: string) => {
+    const asset = assets.find(a => a.id === id);
+    if (asset) {
+      setDeletingAsset(asset);
+    }
+  }, [assets]);
+
+  const confirmDeleteAsset = useCallback(() => {
+    if (!deletingAsset) return;
+    setAssets(prev => prev.filter(a => a.id !== deletingAsset.id));
+    setTransactions(prev => prev.filter(t => t.name !== deletingAsset.name || t.institution !== deletingAsset.institution || t.accountId !== deletingAsset.accountId));
+    setDeletingAsset(null);
+    showToast("자산 및 관련 거래가 삭제되었습니다.");
+  }, [deletingAsset, showToast]);
+
+  const handleDeleteTransaction = useCallback((id: string) => {
+    setTransactions(prev => {
+      const next = prev.filter(t => t.id !== id);
+      setAssets(recalculateAssets(next, assets));
+      return next;
+    });
+    showToast("거래 내역이 삭제되었습니다.");
+  }, [assets, recalculateAssets, showToast]);
 
   const handleExportData = () => {
     try {
@@ -356,214 +414,46 @@ const AppContent: React.FC = () => {
     reader.readAsText(file);
   };
 
-  useEffect(() => {
-    if (syncConfig.autoSync && isAuthenticated) {
-      const timer = setTimeout(() => handleSync('AUTO'), 10000);
-      return () => clearTimeout(timer);
-    }
-  }, [localUpdateTimestamp, isAuthenticated, handleSync, syncConfig.autoSync]);
-
-  const handleUpdatePrices = async () => {
-    if (assets.length === 0) {
-      showToast("업데이트할 자산이 없습니다.");
-      return;
-    }
-    setIsUpdatingPrices(true);
+  const handleCloudLogin = async () => {
+    if (!inputApiKey) return showToast("API Key를 입력해주세요.");
+    setIsSyncing(true);
     try {
-      // 최적화된 시세 업데이트 함수 호출
-      const { updatedAssets, exchangeRate: newRate } = await updateAssetPrices(assets);
-      
-      let finalRate = dynamicExchangeRate;
-      if (newRate) {
-        setDynamicExchangeRate(newRate);
-        finalRate = newRate;
-        localStorage.setItem('portflow_exchange_rate', newRate.toString());
-      }
-
-      setAssets(updatedAssets);
-
-      const totalVal = updatedAssets.reduce((acc, cur) => {
-        const mult = cur.currency === 'USD' ? finalRate : 1;
-        return acc + (cur.currentPrice * cur.quantity * mult);
-      }, 0);
-      
-      const today = new Date().toLocaleDateString('en-CA');
-      setHistory(prev => {
-        const newHistory = prev.filter(h => h.date !== today);
-        return [...newHistory, { date: today, value: Math.floor(totalVal) }].slice(-52);
-      });
-
-      setLastUpdated(new Date().toLocaleString());
-      
-      const count = updatedAssets.filter(a => a.type !== AssetType.CASH).length;
-      if (newRate) {
-        showToast(`${count}개 자산 시세 및 환율(${newRate}원) 갱신 완료`);
+      let binId = inputBinId;
+      if (!binId) {
+        binId = await createBin(inputApiKey, getCurrentAppData());
+        showToast("새 클라우드 저장소가 생성되었습니다.");
       } else {
-        showToast(`${count}개 자산 시세가 업데이트되었습니다.`);
-      }
-    } catch (e) { 
-      console.error(e);
-      showToast("시세 업데이트 중 오류 발생"); 
-    } finally { 
-      setIsUpdatingPrices(false); 
-    }
-  };
-
-  const handleDeleteAsset = (id: string) => {
-    const asset = assets.find(a => a.id === id);
-    if (!asset) return;
-
-    if (window.confirm(`'${asset.name}' 자산과 관련된 모든 거래 내역이 함께 삭제됩니다. 계속하시겠습니까?`)) {
-      const newTransactions = transactions.filter(t => 
-        !(t.name === asset.name && t.institution === asset.institution && t.accountId === asset.accountId)
-      );
-      setTransactions(newTransactions);
-      setAssets(recalculateAssets(newTransactions, assets));
-      showToast("자산 및 관련 거래 내역이 삭제되었습니다.");
-    }
-  };
-
-  const handleSaveAsset = (asset: Asset) => {
-    if (editingAsset) {
-      const oldName = editingAsset.name;
-      const oldInst = editingAsset.institution;
-      const oldAcc = editingAsset.accountId;
-
-      const newTxs = transactions.map(t => {
-        if (t.name === oldName && t.institution === oldInst && t.accountId === oldAcc) {
-          return { ...t, name: asset.name, institution: asset.institution, accountId: asset.accountId, assetType: asset.type, currency: asset.currency };
+        const cloudData = await readBin(inputApiKey, binId);
+        showToast("저장소 연결 성공!");
+        if (window.confirm("기존 클라우드 데이터를 불러오시겠습니까?")) {
+          applyAppData(cloudData);
         }
-        return t;
-      });
-      setTransactions(newTxs);
-      setAssets(recalculateAssets(newTxs, assets.map(a => a.id === asset.id ? asset : a)));
-      showToast("수정되었습니다.");
-    } else {
-      const initialTx: Transaction = {
-        id: Math.random().toString(36).substr(2, 9),
-        accountId: asset.accountId,
-        date: new Date().toLocaleDateString('en-CA'),
-        type: TransactionType.BUY,
-        assetType: asset.type,
-        institution: asset.institution,
-        name: asset.name,
-        quantity: asset.quantity,
-        price: asset.purchasePrice,
-        currency: asset.currency,
-        exchangeRate: asset.currency === 'USD' ? dynamicExchangeRate : 1
+      }
+      const newConfig = { 
+        apiKey: inputApiKey, 
+        binId, 
+        lastSynced: new Date().toLocaleString(), 
+        autoSync: true,
+        lastSyncedDataTimestamp: localUpdateTimestamp 
       };
-      
-      const newTxs = [initialTx, ...transactions];
-      setTransactions(newTxs);
-      setAssets(recalculateAssets(newTxs, [...assets, asset]));
-      showToast("새 자산이 거래 내역과 함께 추가되었습니다.");
-    }
-    setEditingAsset(undefined); setIsManualModalOpen(false);
-  };
-
-  const handleTransactionSave = (tx: Transaction) => {
-    let newTransactions;
-    if (editingTransaction) {
-      newTransactions = transactions.map(t => t.id === tx.id ? tx : t);
-    } else {
-      newTransactions = [tx, ...transactions];
-    }
-    setTransactions(newTransactions);
-    setAssets(recalculateAssets(newTransactions, assets));
-    showToast(editingTransaction ? "거래가 수정되었습니다." : "거래가 기록되었습니다.");
-    setEditingTransaction(undefined); setIsTransactionModalOpen(false);
-  };
-
-  const handleDeleteTransaction = (id: string) => {
-    const newTransactions = transactions.filter(t => t.id !== id);
-    setTransactions(newTransactions);
-    setAssets(recalculateAssets(newTransactions, assets));
-    showToast("거래 기록이 삭제되었습니다.");
-  };
-
-  const handleUpdateTransactions = (newTxs: Transaction[]) => {
-    setTransactions(newTxs);
-    setAssets(recalculateAssets(newTxs, assets));
-    showToast("데이터 분류가 업데이트되었습니다.");
+      setSyncConfig(newConfig);
+      setUser(prev => prev ? { ...prev, cloudSync: { apiKey: inputApiKey, binId: binId } } : null);
+      setInputApiKey(''); setInputBinId('');
+    } catch (e: any) { showToast(`연동 실패: ${e.message}`); } finally { setIsSyncing(false); }
   };
 
   const handleLoginSuccess = (userProfile: any) => {
     const updatedUser = { ...user, ...userProfile };
     setUser(updatedUser);
     setIsAuthenticated(true);
-
-    // 로그인 직후 클라우드 데이터를 "내리기(Pull)" 수행하여 로컬 상태를 최신화함
     if (updatedUser.dataBinId) {
-      setSyncConfig(prev => ({ 
-        ...prev, 
-        apiKey: CLOUD_MASTER_KEY, 
-        binId: updatedUser.dataBinId, 
-        autoSync: true 
-      }));
-      // 내리기(Pull) 명시적 수행
+      setSyncConfig(prev => ({ ...prev, apiKey: CLOUD_MASTER_KEY, binId: updatedUser.dataBinId, autoSync: true }));
       setTimeout(() => handleSync('FORCE_PULL'), 800);
-    } else if (updatedUser.cloudSync && updatedUser.cloudSync.apiKey) {
-      setSyncConfig(prev => ({
-        ...prev,
-        apiKey: updatedUser.cloudSync.apiKey,
-        binId: updatedUser.cloudSync.binId,
-        autoSync: true
-      }));
-      showToast("저장된 클라우드 정보를 복원하고 데이터를 불러옵니다...");
-      // 내리기(Pull) 명시적 수행
-      setTimeout(() => handleSync('FORCE_PULL'), 800);
-    } else if (syncConfig.apiKey && syncConfig.binId) {
-      showToast("클라우드 데이터를 불러오고 있습니다...");
-      // 내리기(Pull) 명시적 수행
-      setTimeout(() => handleSync('FORCE_PULL'), 600);
     }
   };
 
-  const handleLogout = () => {
-    setIsAuthenticated(false);
-    setIsSettingsOpen(false);
-    navigate('/');
-    showToast("로그아웃 되었습니다.");
-  };
-
-  const handleUpdateUser = async (updatedUser: UserProfile) => {
-    setUser(updatedUser);
-    try {
-      const registry = await fetchUsersRegistry(CLOUD_MASTER_KEY);
-      const userIndex = registry.users.findIndex(u => u.name === updatedUser.name);
-      if (userIndex !== -1) {
-        registry.users[userIndex] = { ...registry.users[userIndex], ...updatedUser };
-        await updateUsersRegistry(CLOUD_MASTER_KEY, registry);
-        showToast("사용자 정보가 업데이트되었습니다.");
-      }
-    } catch (error) {
-      console.error("Registry update failed:", error);
-      showToast("로컬 정보는 업데이트되었으나 클라우드 동기화에 실패했습니다.");
-    }
-  };
-
-  const handleSaveAIStrategy = useCallback((data: { 
-    type: 'DIAGNOSIS' | 'STRATEGY', 
-    name: string, 
-    diagnosis?: DiagnosisResponse, 
-    strategy?: RebalancingStrategy 
-  }) => {
-    const newSaved: SavedStrategy = { 
-      id: Date.now().toString() + Math.random().toString(36).substr(2, 5),
-      createdAt: Date.now(), 
-      name: data.name,
-      diagnosis: data.diagnosis, 
-      strategy: data.strategy
-    };
-    
-    setSavedStrategies(prev => [newSaved, ...prev]);
-    showToast("전략 보관함에 저장되었습니다.");
-  }, [showToast]);
-
-  const handleDeleteAIStrategy = useCallback((id: string) => {
-    setSavedStrategies(prev => prev.filter(s => s.id !== id));
-    showToast("보관함에서 삭제되었습니다.");
-  }, [showToast]);
+  const handleLogout = () => { setIsAuthenticated(false); setIsSettingsOpen(false); navigate('/'); showToast("로그아웃 되었습니다."); };
+  const handleUpdateUser = (u: UserProfile) => { setUser(u); setLocalUpdateTimestamp(Date.now()); showToast("프로필 업데이트 완료"); };
 
   if (!isAuthenticated) return <AuthScreen onLoginSuccess={handleLoginSuccess} />;
 
@@ -575,29 +465,22 @@ const AppContent: React.FC = () => {
           <CheckCircle2 size={14} className="text-emerald-400" /> {toast}
         </div>
       )}
-
       <div className="flex-1 overflow-y-auto no-scrollbar bg-[#F4F7FB]">
         <Routes>
           <Route path="/" element={<Dashboard assets={assets} accounts={accounts} transactions={transactions} user={user} onRefresh={handleUpdatePrices} isUpdating={isUpdatingPrices} lastUpdated={lastUpdated} history={history} exchangeRate={dynamicExchangeRate} />} />
-          <Route path="/assets" element={<AssetList assets={assets} setAssets={setAssets} onAddAsset={() => { setEditingAsset(undefined); setIsManualModalOpen(true); }} onEditAsset={(a) => { setEditingAsset(a); setIsManualModalOpen(true); }} onDeleteAsset={handleDeleteAsset} onSync={handleLocalSync} onRefreshPrices={handleUpdatePrices} isRefreshing={isUpdatingPrices} exchangeRate={dynamicExchangeRate} accounts={accounts} />} />
-          <Route path="/advisor" element={<AIAdvisor assets={assets} accounts={accounts} onApplyRebalancing={(inst) => showToast(`${inst} 리밸런싱 시뮬레이션 전송`)} exchangeRate={dynamicExchangeRate} user={user} onUpdateUser={handleUpdateUser} savedStrategies={savedStrategies} onSaveStrategy={handleSaveAIStrategy} onDeleteStrategy={handleDeleteAIStrategy} />} />
-          <Route path="/history" element={<TransactionHistory transactions={transactions} accounts={accounts} onDelete={handleDeleteTransaction} onEdit={(tx) => { setEditingTransaction(tx); setIsTransactionModalOpen(true); }} onUpdate={handleUpdateTransactions} exchangeRate={dynamicExchangeRate} />} />
+          <Route path="/assets" element={<AssetList assets={assets} setAssets={setAssets} onAddAsset={() => setIsManualModalOpen(true)} onEditAsset={(a) => { setEditingAsset(a); setIsManualModalOpen(true); }} onDeleteAsset={handleDeleteAsset} onSync={() => handleSync('SMART')} onRefreshPrices={handleUpdatePrices} isRefreshing={isUpdatingPrices} exchangeRate={dynamicExchangeRate} accounts={accounts} />} />
+          <Route path="/advisor" element={<AIAdvisor assets={assets} accounts={accounts} onApplyRebalancing={() => {}} exchangeRate={dynamicExchangeRate} user={user} onUpdateUser={handleUpdateUser} savedStrategies={savedStrategies} onSaveStrategy={handleSaveAIStrategy} onDeleteStrategy={handleDeleteAIStrategy} />} />
+          <Route path="/history" element={<TransactionHistory transactions={transactions} accounts={accounts} onDelete={handleDeleteTransaction} onEdit={(tx) => { setEditingTransaction(tx); setIsTransactionModalOpen(true); }} onUpdate={(txs) => { setTransactions(txs); setAssets(recalculateAssets(txs, assets)); }} exchangeRate={dynamicExchangeRate} />} />
           <Route path="/analytics" element={<AnalyticsView history={history} assets={assets} exchangeRate={dynamicExchangeRate} />} />
           <Route path="/accounts" element={<AccountManager accounts={accounts} setAccounts={setAccounts} assets={assets} exchangeRate={dynamicExchangeRate} />} />
         </Routes>
       </div>
-
       <div className="bg-white/90 backdrop-blur-xl border-t border-slate-100 flex justify-between items-center z-50 shrink-0 pb-safe shadow-top">
         <div className="px-6 py-3 flex w-full justify-between items-end">
           <NavLink to="/" icon={<Home size={22} />} label="홈" />
           <NavLink to="/assets" icon={<Wallet size={22} />} label="자산" />
           <div className="relative -top-8 px-2">
-            <button 
-              onClick={() => { setEditingTransaction(undefined); setIsTransactionModalOpen(true); }} 
-              className="w-16 h-16 bg-indigo-600 rounded-full flex items-center justify-center text-white shadow-2xl shadow-indigo-400 active:scale-95 transition-all border-4 border-white"
-            >
-              <PlusCircle size={32} />
-            </button>
+            <button onClick={() => { setEditingTransaction(undefined); setIsTransactionModalOpen(true); }} className="w-16 h-16 bg-indigo-600 rounded-full flex items-center justify-center text-white shadow-2xl shadow-indigo-400 active:scale-95 transition-all border-4 border-white"><PlusCircle size={32} /></button>
           </div>
           <NavLink to="/advisor" icon={<Cpu size={22} />} label="AI 조언" />
           <button onClick={() => setIsSettingsOpen(true)} className="flex flex-col items-center gap-1.5 pb-1 group">
@@ -607,58 +490,78 @@ const AppContent: React.FC = () => {
         </div>
       </div>
 
-      {isManualModalOpen && <ManualAssetEntry onClose={() => setIsManualModalOpen(false)} onSave={handleSaveAsset} asset={editingAsset} accounts={accounts} exchangeRate={dynamicExchangeRate} />}
-      {isTransactionModalOpen && <ManualTransactionEntry onClose={() => setIsTransactionModalOpen(false)} onSave={handleTransactionSave} assets={assets} accounts={accounts} transaction={editingTransaction} exchangeRate={dynamicExchangeRate} />}
-      {deletingAsset && <DeleteConfirmModal asset={deletingAsset} onClose={() => setDeletingAsset(null)} onConfirm={() => handleDeleteAsset(deletingAsset.id)} />}
+      {isManualModalOpen && <ManualAssetEntry onClose={() => { setIsManualModalOpen(false); setEditingAsset(undefined); }} onSave={handleSaveAsset} asset={editingAsset} accounts={accounts} exchangeRate={dynamicExchangeRate} />}
+      {isTransactionModalOpen && <ManualTransactionEntry onClose={() => { setIsTransactionModalOpen(false); setEditingTransaction(undefined); }} onSave={handleSaveTransaction} transaction={editingTransaction} assets={assets} accounts={accounts} exchangeRate={dynamicExchangeRate} />}
+      {deletingAsset && <DeleteConfirmModal asset={deletingAsset} onClose={() => setDeletingAsset(null)} onConfirm={confirmDeleteAsset} />}
 
+      {/* 설정 사이드 메뉴 복구 */}
       {isSettingsOpen && (
         <div className="absolute inset-0 z-[150] bg-slate-900/50 backdrop-blur-sm" onClick={() => setIsSettingsOpen(false)}>
           <div className="absolute top-0 right-0 bottom-0 w-3/4 max-w-sm bg-white shadow-2xl p-6 overflow-y-auto animate-in slide-in-from-right duration-300" onClick={e => e.stopPropagation()}>
-            <div className="flex items-center justify-between mb-8"><h2 className="text-xl font-black text-slate-800">설정</h2><button onClick={() => setIsSettingsOpen(false)}><X size={24} className="text-slate-400" /></button></div>
+            <div className="flex items-center justify-between mb-8">
+              <h2 className="text-xl font-black text-slate-800">설정</h2>
+              <button onClick={() => setIsSettingsOpen(false)}><X size={24} className="text-slate-400" /></button>
+            </div>
             <div className="space-y-8">
-              <section><h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4">Shortcuts</h3><button onClick={() => { navigate('/history'); setIsSettingsOpen(false); }} className="w-full p-4 bg-slate-50 rounded-2xl flex items-center justify-between group hover:bg-indigo-50"><div className="flex items-center gap-3"><div className="p-2 bg-white rounded-xl shadow-sm text-slate-400 group-hover:text-indigo-600"><History size={18} /></div><span className="text-xs font-bold text-slate-700">거래 내역 조회</span></div><ChevronRight size={16} className="text-slate-300" /></button></section>
-              <section><h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4">Local Backup</h3><div className="bg-slate-50 p-4 rounded-2xl border border-slate-100"><div className="flex gap-2 mb-3"><button onClick={handleExportData} className="flex-1 py-3 bg-white rounded-xl shadow-sm text-[10px] font-black text-slate-600 flex flex-col items-center gap-1 active:scale-95"><Download size={16} className="text-indigo-600" />내보내기</button><button onClick={() => fileInputRef.current?.click()} className="flex-1 py-3 bg-white rounded-xl shadow-sm text-[10px] font-black text-slate-600 flex flex-col items-center gap-1 active:scale-95"><Upload size={16} className="text-emerald-600" />불러오기</button></div></div></section>
-              <section><h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4">Cloud Sync (JSONBin)</h3>{!syncConfig.apiKey ? (
-                <div className="space-y-3"><input type="password" placeholder="Master Key" className="w-full p-4 bg-slate-50 rounded-xl text-xs font-bold border border-slate-200 nucleus-none focus:border-indigo-500" value={inputApiKey} onChange={(e) => setInputApiKey(e.target.value)} /><input type="text" placeholder="Bin ID (선택)" className="w-full p-4 bg-slate-50 rounded-xl text-xs font-bold border border-slate-200 nucleus-none focus:border-indigo-500" value={inputBinId} onChange={(e) => setInputBinId(e.target.value)} /><button onClick={handleCloudLogin} disabled={isSyncing} className="w-full py-4 bg-indigo-600 text-white rounded-xl font-black text-xs flex items-center justify-center gap-2">{isSyncing ? <Loader2 size={14} className="animate-spin" /> : <CloudCog size={14} />}연동하기</button></div>
-              ) : (
-                <div className="bg-indigo-50 p-5 rounded-2xl border border-indigo-100"><div className="flex items-center gap-2 mb-2"><Cloud size={16} className="text-indigo-600" /><span className="text-xs font-black text-indigo-900">클라우드 연동됨</span></div><p className="text-[9px] font-bold text-slate-500 mb-4 break-all">ID: {syncConfig.binId}</p><div className="grid grid-cols-2 gap-2 mb-3"><button onClick={() => handleSync('FORCE_PUSH')} disabled={isSyncing} className="py-2 bg-white text-indigo-600 rounded-lg text-[9px] font-black shadow-sm flex items-center justify-center gap-1">올리기</button><button onClick={() => handleSync('FORCE_PULL')} disabled={isSyncing} className="py-2 bg-white text-indigo-600 rounded-lg text-[9px] font-black shadow-sm flex items-center justify-center gap-1">내리기</button></div><button onClick={() => { setSyncConfig({apiKey:'', binId:'', lastSynced:'', autoSync: false}); setUser(prev => prev ? { ...prev, cloudSync: undefined } : null); showToast('연동 해제됨'); }} className="w-full py-2 bg-white text-rose-500 rounded-lg text-[9px] font-black shadow-sm mb-3">연동 해제</button><div className="flex items-center justify-between"><span className="text-[10px] font-bold text-slate-400">자동 동기화</span><button onClick={() => setSyncConfig(p => ({...p, autoSync: !p.autoSync}))} className={`w-8 h-4 rounded-full transition-colors relative ${syncConfig.autoSync ? 'bg-indigo-600' : 'bg-slate-300'}`}><div className={`absolute top-0.5 w-3 h-3 bg-white rounded-full transition-all ${syncConfig.autoSync ? 'left-4.5' : 'left-0.5'}`}></div></button></div></div>
-              )}</section>
               <section>
-                <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4">Account</h3>
-                <div className="space-y-3">
-                  <button 
-                    onClick={handleLogout}
-                    className="w-full p-4 bg-white border border-slate-200 rounded-2xl flex items-center justify-between group hover:bg-rose-50 hover:border-rose-100 transition-all"
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className="p-2 bg-slate-50 rounded-xl text-slate-400 group-hover:bg-rose-100 group-hover:text-rose-500 transition-colors">
-                        <LogOut size={18} />
-                      </div>
-                      <span className="text-xs font-bold text-slate-700 group-hover:text-rose-600">로그아웃</span>
-                    </div>
-                    <ChevronRight size={16} className="text-slate-300 group-hover:text-rose-400" />
-                  </button>
-                  
-                  <div className="p-4 bg-slate-50 border border-slate-100 rounded-2xl">
-                    <div className="flex items-center gap-2 mb-2">
-                      <Database size={16} className="text-slate-400" />
-                      <span className="text-xs font-black text-slate-600">데이터 초기화</span>
-                    </div>
-                    <p className="text-[10px] text-slate-400 font-medium mb-3">
-                      기기에 저장된 모든 자산 및 설정 데이터를 영구적으로 삭제합니다.
-                    </p>
-                    <button 
-                      onClick={() => {
-                        if (window.confirm("정말로 모든 데이터를 삭제하고 초기화하시겠습니까?")) {
-                          localStorage.clear();
-                          window.location.reload();
-                        }
-                      }}
-                      className="w-full py-3 bg-white border border-slate-200 text-rose-500 rounded-xl text-[10px] font-black hover:bg-rose-50 hover:border-rose-100 transition-all"
-                    >
-                      모든 데이터 삭제
+                <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4">Shortcuts</h3>
+                <button onClick={() => { navigate('/history'); setIsSettingsOpen(false); }} className="w-full p-4 bg-slate-50 rounded-2xl flex items-center justify-between group hover:bg-indigo-50 transition-all">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 bg-white rounded-xl shadow-sm text-slate-400 group-hover:text-indigo-600 transition-colors"><History size={18} /></div>
+                    <span className="text-xs font-bold text-slate-700">거래 내역 조회</span>
+                  </div>
+                  <ChevronRight size={16} className="text-slate-300" />
+                </button>
+              </section>
+
+              <section>
+                <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4">Local Backup</h3>
+                <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100">
+                  <div className="flex gap-2 mb-3">
+                    <button onClick={handleExportData} className="flex-1 py-3 bg-white rounded-xl shadow-sm text-[10px] font-black text-slate-600 flex flex-col items-center gap-1 active:scale-95 transition-all">
+                      <Download size={16} className="text-indigo-600" />내보내기
+                    </button>
+                    <button onClick={() => fileInputRef.current?.click()} className="flex-1 py-3 bg-white rounded-xl shadow-sm text-[10px] font-black text-slate-600 flex flex-col items-center gap-1 active:scale-95 transition-all">
+                      <Upload size={16} className="text-emerald-600" />불러오기
                     </button>
                   </div>
+                </div>
+              </section>
+
+              <section>
+                <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4">Cloud Sync</h3>
+                {!syncConfig.apiKey ? (
+                  <div className="space-y-3">
+                    <input type="password" placeholder="JSONBin Master Key" className="w-full p-4 bg-slate-50 rounded-xl text-xs font-bold border border-slate-200 outline-none focus:border-indigo-500" value={inputApiKey} onChange={(e) => setInputApiKey(e.target.value)} />
+                    <input type="text" placeholder="Bin ID (선택)" className="w-full p-4 bg-slate-50 rounded-xl text-xs font-bold border border-slate-200 outline-none focus:border-indigo-500" value={inputBinId} onChange={(e) => setInputBinId(e.target.value)} />
+                    <button onClick={handleCloudLogin} disabled={isSyncing} className="w-full py-4 bg-indigo-600 text-white rounded-xl font-black text-xs flex items-center justify-center gap-2">
+                      {isSyncing ? <Loader2 size={14} className="animate-spin" /> : <CloudCog size={14} />} 연동하기
+                    </button>
+                  </div>
+                ) : (
+                  <div className="bg-indigo-50 p-5 rounded-2xl border border-indigo-100">
+                    <div className="flex items-center gap-2 mb-2"><Cloud size={16} className="text-indigo-600" /><span className="text-xs font-black text-indigo-900">클라우드 연동됨</span></div>
+                    <p className="text-[9px] font-bold text-slate-500 mb-4 break-all">ID: {syncConfig.binId}</p>
+                    <div className="grid grid-cols-2 gap-2 mb-3">
+                      <button onClick={() => handleSync('FORCE_PUSH')} disabled={isSyncing} className="py-2 bg-white text-indigo-600 rounded-lg text-[9px] font-black shadow-sm">올리기</button>
+                      <button onClick={() => handleSync('FORCE_PULL')} disabled={isSyncing} className="py-2 bg-white text-indigo-600 rounded-lg text-[9px] font-black shadow-sm">내리기</button>
+                    </div>
+                    <button onClick={() => { setSyncConfig({apiKey:'', binId:'', lastSynced:'', autoSync: false}); showToast('연동 해제됨'); }} className="w-full py-2 bg-white text-rose-500 rounded-lg text-[9px] font-black shadow-sm">연동 해제</button>
+                  </div>
+                )}
+              </section>
+
+              <section>
+                <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4">Account</h3>
+                <button onClick={handleLogout} className="w-full p-4 bg-white border border-slate-200 rounded-2xl flex items-center justify-between group hover:bg-rose-50 hover:border-rose-100 transition-all">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 bg-slate-50 rounded-xl text-slate-400 group-hover:text-rose-600"><LogOut size={18} /></div>
+                    <span className="text-xs font-bold text-slate-700">로그아웃</span>
+                  </div>
+                  <ChevronRight size={16} className="text-slate-300" />
+                </button>
+                <div className="mt-4 p-4 bg-slate-50 border border-slate-100 rounded-2xl">
+                  <button onClick={() => { if(window.confirm("정말로 모든 데이터를 삭제하고 초기화하시겠습니까?")) { localStorage.clear(); window.location.reload(); } }} className="w-full py-3 bg-white border border-slate-200 text-rose-500 rounded-xl text-[10px] font-black">데이터 완전 초기화</button>
                 </div>
               </section>
             </div>
@@ -669,12 +572,5 @@ const AppContent: React.FC = () => {
   );
 };
 
-const App: React.FC = () => {
-  return (
-    <HashRouter>
-      <AppContent />
-    </HashRouter>
-  );
-};
-
+const App: React.FC = () => <HashRouter><AppContent /></HashRouter>;
 export default App;
