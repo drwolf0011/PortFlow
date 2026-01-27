@@ -1,6 +1,6 @@
 
 import React, { useState, useMemo, useRef, useEffect } from 'react';
-import { X, Calendar, Search, ChevronRight, ChevronLeft, ChevronsLeft, ChevronsRight, Loader2, Sparkles, CreditCard, CheckCircle2, Clock, Save, Layers, RefreshCw, BookmarkCheck, Globe, Landmark } from 'lucide-react';
+import { X, Calendar, Search, ChevronRight, ChevronLeft, ChevronsLeft, ChevronsRight, Loader2, Sparkles, CreditCard, CheckCircle2, Clock, Save, Layers, RefreshCw, BookmarkCheck, Globe, Landmark, Building2 } from 'lucide-react';
 import { Transaction, TransactionType, Asset, Account, AssetType, AccountType } from '../types';
 import { searchStockList, StockInfo } from '../services/geminiService';
 
@@ -212,6 +212,25 @@ const ManualTransactionEntry: React.FC<ManualTransactionEntryProps> = ({ onClose
                 ))}
               </div>
             )}
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">금융기관</label>
+              <div className="relative">
+                <Building2 className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300" size={16} />
+                <input type="text" name="institution" placeholder="증권사/은행명" value={formData.institution} onChange={handleChange} className="w-full pl-11 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-bold outline-none focus:border-indigo-500 transition-all" />
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">자산 종류</label>
+              <div className="relative">
+                <Layers className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300" size={16} />
+                <select name="assetType" value={formData.assetType} onChange={handleChange} className="w-full pl-11 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-bold outline-none appearance-none focus:border-indigo-500 transition-all cursor-pointer">
+                  {Object.values(AssetType).map(t => <option key={t} value={t}>{t}</option>)}
+                </select>
+              </div>
+            </div>
           </div>
 
           <div className="grid grid-cols-2 gap-4">
