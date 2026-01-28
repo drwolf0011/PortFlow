@@ -16,6 +16,7 @@ import {
   Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell
 } from 'recharts';
+import { getInstitutionColor } from './AssetList';
 
 interface DashboardProps {
   assets: Asset[];
@@ -339,8 +340,9 @@ const Dashboard: React.FC<DashboardProps> = ({ assets, accounts, user, onRefresh
           {stats.processedAssets.slice(0, 5).map(asset => (
             <div key={asset.id} className="flex items-center justify-between group">
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 bg-slate-50 border border-slate-100 rounded-xl flex items-center justify-center font-black text-[10px] text-slate-400 uppercase">
-                  {asset.ticker ? asset.ticker.substring(0, 3) : asset.name[0]}
+                <div className={`w-10 h-10 rounded-xl flex items-center justify-center font-black text-[10px] border transition-all ${getInstitutionColor(asset.institution)}`}>
+                  {/* FIX: 종목명 대신 기관명(2글자)을 표시하도록 수정 */}
+                  {asset.institution.substring(0, 2)}
                 </div>
                 <div>
                   <p className="text-xs font-black text-slate-800">{asset.name}</p>

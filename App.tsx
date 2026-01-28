@@ -1,13 +1,12 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-/* Fix: Using wildcard import for react-router-dom to resolve named export errors in this environment */
 import * as ReactRouterDOM from 'react-router-dom';
 const { HashRouter, Routes, Route, Link, useLocation, useNavigate } = ReactRouterDOM;
 import { 
   Home, Wallet, LineChart, Cpu, PlusCircle, Settings,
-  RefreshCw, CheckCircle2, LogOut, RotateCcw, X,
-  AlertTriangle, History, Download, Upload, Trash2, Database, ChevronRight, Clock,
-  Globe, CreditCard, Loader2, CloudCog, Cloud
+  CheckCircle2, LogOut, RotateCcw, X,
+  History, Download, Upload, Trash2, Database, ChevronRight,
+  Globe, CreditCard, Loader2, CloudCog, Cloud, Sparkles, ArrowRightLeft
 } from 'lucide-react';
 import Dashboard from './components/Dashboard';
 import AssetList from './components/AssetList';
@@ -20,9 +19,9 @@ import ManualTransactionEntry from './components/ManualTransactionEntry';
 import DeleteConfirmModal from './components/DeleteConfirmModal';
 import AuthScreen from './components/AuthScreen';
 import { EXCHANGE_RATE as DEFAULT_EXCHANGE_RATE, CLOUD_MASTER_KEY } from './constants';
-import { Asset, Transaction, TransactionType, AssetType, Account, SyncConfig, AppData, RebalancingStrategy, UserProfile, DiagnosisResponse, SavedStrategy } from './types';
+import { Asset, Transaction, TransactionType, AssetType, Account, SyncConfig, AppData, RebalancingStrategy, UserProfile, DiagnosisResponse, SavedStrategy, AccountType } from './types';
 import { updateAssetPrices } from './services/geminiService';
-import { createBin, updateBin, readBin, fetchUsersRegistry, updateUsersRegistry } from './services/storageService';
+import { createBin, updateBin, readBin } from './services/storageService';
 
 const NavLink: React.FC<{ to: string; icon: React.ReactNode; label: string }> = ({ to, icon, label }) => {
   const location = useLocation();
@@ -41,7 +40,6 @@ const NavLink: React.FC<{ to: string; icon: React.ReactNode; label: string }> = 
 
 const AppContent: React.FC = () => {
   const navigate = useNavigate();
-  const location = useLocation();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // --- Data State ---
@@ -115,28 +113,32 @@ const AppContent: React.FC = () => {
     setTimeout(() => setToast(null), 3000);
   }, []);
 
-  // --- Persistence ---
+  // --- Persistence Hooks ---
   useEffect(() => { 
     localStorage.setItem('portflow_assets', JSON.stringify(assets));
     setLocalUpdateTimestamp(Date.now());
   }, [assets]);
+
   useEffect(() => { 
     localStorage.setItem('portflow_transactions', JSON.stringify(transactions));
     setLocalUpdateTimestamp(Date.now());
   }, [transactions]);
+
   useEffect(() => { 
     localStorage.setItem('portflow_accounts', JSON.stringify(accounts));
     setLocalUpdateTimestamp(Date.now());
   }, [accounts]);
+
+  useEffect(() => { 
+    localStorage.setItem('portflow_saved_strategies', JSON.stringify(savedStrategies));
+    setLocalUpdateTimestamp(Date.now());
+  }, [savedStrategies]);
+
   useEffect(() => { localStorage.setItem('portflow_history', JSON.stringify(history)); }, [history]);
   useEffect(() => { localStorage.setItem('portflow_sync_config', JSON.stringify(syncConfig)); }, [syncConfig]);
   useEffect(() => { localStorage.setItem('portflow_user', JSON.stringify(user)); }, [user]);
   useEffect(() => { localStorage.setItem('portflow_exchange_rate', dynamicExchangeRate.toString()); }, [dynamicExchangeRate]);
   useEffect(() => { localStorage.setItem('portflow_last_updated', lastUpdated); }, [lastUpdated]);
-  
-  useEffect(() => { 
-    localStorage.setItem('portflow_saved_strategies', JSON.stringify(savedStrategies));
-  }, [savedStrategies]);
 
   const recalculateAssets = useCallback((txs: Transaction[], currentAssets: Asset[]) => {
     const groups: Record<string, Transaction[]> = {};
@@ -157,6 +159,9 @@ const AppContent: React.FC = () => {
       let totalCostKRW = 0; 
       let totalCostUSD = 0; 
       const sortedTxs = [...groupTxs].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+      
+      const linkedAccount = accId !== 'none' ? accounts.find(a => a.id === accId) : null;
+
       sortedTxs.forEach(tx => {
         const effectiveRate = tx.currency === 'USD' ? (tx.exchangeRate || dynamicExchangeRate) : 1;
         const txPriceKRW = tx.price * effectiveRate;
@@ -184,12 +189,13 @@ const AppContent: React.FC = () => {
           purchasePriceKRW: totalCostKRW / totalQty,
           currentPrice: meta?.currentPrice || sortedTxs[sortedTxs.length - 1].price,
           currency: sortedTxs[0].currency,
-          accountId: accId === 'none' ? undefined : accId
+          accountId: accId === 'none' ? undefined : accId,
+          managementType: linkedAccount?.type || meta?.managementType || sortedTxs[0].managementType || AccountType.GENERAL
         });
       }
     });
     return newAssets;
-  }, [dynamicExchangeRate]);
+  }, [dynamicExchangeRate, accounts]);
 
   const getCurrentAppData = useCallback((): AppData => {
     return {
@@ -212,7 +218,6 @@ const AppContent: React.FC = () => {
     
     if (Array.isArray(data.savedStrategies)) {
       setSavedStrategies(data.savedStrategies);
-      localStorage.setItem('portflow_saved_strategies', JSON.stringify(data.savedStrategies));
     }
 
     if (data.user) setUser({ ...data.user });
@@ -299,19 +304,14 @@ const AppContent: React.FC = () => {
   }) => {
     try {
       const newSaved: SavedStrategy = { 
-        id: Date.now().toString() + Math.random().toString(36).substr(2, 5),
+        id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
         createdAt: Date.now(), 
         name: data.name,
         diagnosis: data.diagnosis ? JSON.parse(JSON.stringify(data.diagnosis)) : undefined,
         strategy: data.strategy ? JSON.parse(JSON.stringify(data.strategy)) : undefined  
       };
       
-      setSavedStrategies(prev => {
-        const next = [newSaved, ...prev];
-        localStorage.setItem('portflow_saved_strategies', JSON.stringify(next));
-        setLocalUpdateTimestamp(Date.now());
-        return next;
-      });
+      setSavedStrategies(prev => [newSaved, ...prev]);
       showToast("전략 보관함에 저장되었습니다.");
     } catch (error: any) {
       console.error("Save AI Strategy failed:", error);
@@ -320,12 +320,7 @@ const AppContent: React.FC = () => {
   }, [showToast]);
 
   const handleDeleteAIStrategy = useCallback((id: string) => {
-    setSavedStrategies(prev => {
-      const next = prev.filter(s => s.id !== id);
-      localStorage.setItem('portflow_saved_strategies', JSON.stringify(next));
-      setLocalUpdateTimestamp(Date.now());
-      return next;
-    });
+    setSavedStrategies(prev => prev.filter(s => s.id !== id));
     showToast("보관함에서 삭제되었습니다.");
   }, [showToast]);
 
@@ -361,9 +356,7 @@ const AppContent: React.FC = () => {
 
   const handleDeleteAsset = useCallback((id: string) => {
     const asset = assets.find(a => a.id === id);
-    if (asset) {
-      setDeletingAsset(asset);
-    }
+    if (asset) setDeletingAsset(asset);
   }, [assets]);
 
   const confirmDeleteAsset = useCallback(() => {
@@ -424,10 +417,8 @@ const AppContent: React.FC = () => {
         showToast("새 클라우드 저장소가 생성되었습니다.");
       } else {
         const cloudData = await readBin(inputApiKey, binId);
-        showToast("저장소 연결 성공!");
-        if (window.confirm("기존 클라우드 데이터를 불러오시겠습니까?")) {
-          applyAppData(cloudData);
-        }
+        applyAppData(cloudData);
+        showToast("클라우드 데이터를 성공적으로 불러왔습니다.");
       }
       const newConfig = { 
         apiKey: inputApiKey, 
@@ -439,138 +430,131 @@ const AppContent: React.FC = () => {
       setSyncConfig(newConfig);
       setUser(prev => prev ? { ...prev, cloudSync: { apiKey: inputApiKey, binId: binId } } : null);
       setInputApiKey(''); setInputBinId('');
+      setIsSettingsOpen(false);
     } catch (e: any) { showToast(`연동 실패: ${e.message}`); } finally { setIsSyncing(false); }
   };
 
-  const handleLoginSuccess = (userProfile: any) => {
-    const updatedUser = { ...user, ...userProfile };
-    setUser(updatedUser);
-    setIsAuthenticated(true);
-    if (updatedUser.dataBinId) {
-      setSyncConfig(prev => ({ ...prev, apiKey: CLOUD_MASTER_KEY, binId: updatedUser.dataBinId, autoSync: true }));
-      setTimeout(() => handleSync('FORCE_PULL'), 800);
+  const handleLogout = () => { 
+    setIsAuthenticated(false); 
+    setUser(null);
+    localStorage.removeItem('portflow_user');
+    setIsSettingsOpen(false); 
+    navigate('/'); 
+    showToast("로그아웃 되었습니다."); 
+  };
+  
+  const handleClearData = () => {
+    if (window.confirm("모든 데이터를 초기화하시겠습니까? 로컬 저장소가 비워지며 복구할 수 없습니다.")) {
+      localStorage.clear();
+      window.location.reload();
     }
   };
+  
+  const handleUpdateUser = (u: UserProfile) => { 
+    setUser(u); 
+    setLocalUpdateTimestamp(Date.now()); 
+  };
 
-  const handleLogout = () => { setIsAuthenticated(false); setIsSettingsOpen(false); navigate('/'); showToast("로그아웃 되었습니다."); };
-  const handleUpdateUser = (u: UserProfile) => { setUser(u); setLocalUpdateTimestamp(Date.now()); showToast("프로필 업데이트 완료"); };
-
-  if (!isAuthenticated) return <AuthScreen onLoginSuccess={handleLoginSuccess} />;
+  if (!isAuthenticated) {
+    return <AuthScreen onLoginSuccess={(u) => { setUser(u); setIsAuthenticated(true); if(u.dataBinId) setSyncConfig(p => ({...p, apiKey: CLOUD_MASTER_KEY, binId: u.dataBinId, autoSync: true})); }} />;
+  }
 
   return (
-    <div className="flex flex-col h-full bg-[#F4F7FB] max-w-md mx-auto shadow-2xl overflow-hidden relative font-sans">
-      <input type="file" ref={fileInputRef} onChange={handleImportData} className="hidden" accept=".json" />
-      {toast && (
-        <div className="absolute top-6 left-1/2 -translate-x-1/2 z-[200] bg-slate-900/90 text-white px-6 py-3 rounded-full text-xs font-bold shadow-2xl flex items-center gap-2 animate-in slide-in-from-top-2 fade-in backdrop-blur-sm">
-          <CheckCircle2 size={14} className="text-emerald-400" /> {toast}
-        </div>
-      )}
-      <div className="flex-1 overflow-y-auto no-scrollbar bg-[#F4F7FB]">
+    <div className="flex flex-col h-[100dvh] bg-[#F4F7FB] overflow-hidden max-w-md mx-auto shadow-2xl relative font-sans">
+      <main className="flex-1 overflow-y-auto no-scrollbar relative">
         <Routes>
-          <Route path="/" element={<Dashboard assets={assets} accounts={accounts} transactions={transactions} user={user} onRefresh={handleUpdatePrices} isUpdating={isUpdatingPrices} lastUpdated={lastUpdated} history={history} exchangeRate={dynamicExchangeRate} />} />
-          <Route path="/assets" element={<AssetList assets={assets} setAssets={setAssets} onAddAsset={() => setIsManualModalOpen(true)} onEditAsset={(a) => { setEditingAsset(a); setIsManualModalOpen(true); }} onDeleteAsset={handleDeleteAsset} onSync={() => handleSync('SMART')} onRefreshPrices={handleUpdatePrices} isRefreshing={isUpdatingPrices} exchangeRate={dynamicExchangeRate} accounts={accounts} />} />
-          <Route path="/advisor" element={<AIAdvisor assets={assets} accounts={accounts} onApplyRebalancing={() => {}} exchangeRate={dynamicExchangeRate} user={user} onUpdateUser={handleUpdateUser} savedStrategies={savedStrategies} onSaveStrategy={handleSaveAIStrategy} onDeleteStrategy={handleDeleteAIStrategy} />} />
-          <Route path="/history" element={<TransactionHistory transactions={transactions} accounts={accounts} onDelete={handleDeleteTransaction} onEdit={(tx) => { setEditingTransaction(tx); setIsTransactionModalOpen(true); }} onUpdate={(txs) => { setTransactions(txs); setAssets(recalculateAssets(txs, assets)); }} exchangeRate={dynamicExchangeRate} />} />
+          <Route path="/" element={<Dashboard assets={assets} accounts={accounts} transactions={transactions} user={user} history={history} onRefresh={handleUpdatePrices} isUpdating={isUpdatingPrices} lastUpdated={lastUpdated} exchangeRate={dynamicExchangeRate} />} />
+          <Route path="/assets" element={<AssetList assets={assets} setAssets={setAssets} onAddAsset={() => setIsManualModalOpen(true)} onDeleteAsset={handleDeleteAsset} onEditAsset={(a) => { setEditingAsset(a); setIsManualModalOpen(true); }} onSync={() => handleSync('SMART')} onRefreshPrices={handleUpdatePrices} isRefreshing={isUpdatingPrices} exchangeRate={dynamicExchangeRate} accounts={accounts} />} />
+          <Route path="/advisor" element={<AIAdvisor assets={assets} accounts={accounts} onApplyRebalancing={() => {}} exchangeRate={dynamicExchangeRate} user={user} onUpdateUser={handleUpdateUser} savedStrategies={savedStrategies} onSaveStrategy={handleSaveAIStrategy} onDeleteStrategy={handleDeleteAIStrategy} showToast={showToast} />} />
+          <Route path="/history" element={<TransactionHistory transactions={transactions} accounts={accounts} onDelete={handleDeleteTransaction} onEdit={(tx) => { setEditingTransaction(tx); setIsTransactionModalOpen(true); }} onUpdate={(txs) => { setTransactions(txs); setAssets(recalculateAssets(txs, assets)); }} onAdd={() => setIsTransactionModalOpen(true)} exchangeRate={dynamicExchangeRate} />} />
           <Route path="/analytics" element={<AnalyticsView history={history} assets={assets} exchangeRate={dynamicExchangeRate} />} />
           <Route path="/accounts" element={<AccountManager accounts={accounts} setAccounts={setAccounts} assets={assets} exchangeRate={dynamicExchangeRate} />} />
         </Routes>
-      </div>
-      <div className="bg-white/90 backdrop-blur-xl border-t border-slate-100 flex justify-between items-center z-50 shrink-0 pb-safe shadow-top">
-        <div className="px-6 py-3 flex w-full justify-between items-end">
-          <NavLink to="/" icon={<Home size={22} />} label="홈" />
-          <NavLink to="/assets" icon={<Wallet size={22} />} label="자산" />
-          <div className="relative -top-8 px-2">
-            <button onClick={() => { setEditingTransaction(undefined); setIsTransactionModalOpen(true); }} className="w-16 h-16 bg-indigo-600 rounded-full flex items-center justify-center text-white shadow-2xl shadow-indigo-400 active:scale-95 transition-all border-4 border-white"><PlusCircle size={32} /></button>
-          </div>
-          <NavLink to="/advisor" icon={<Cpu size={22} />} label="AI 조언" />
-          <button onClick={() => setIsSettingsOpen(true)} className="flex flex-col items-center gap-1.5 pb-1 group">
-            <Settings size={22} className="text-slate-300 group-hover:text-indigo-600 transition-colors" />
-            <span className="text-[9px] font-black text-slate-300 group-hover:text-indigo-600">설정</span>
-          </button>
-        </div>
-      </div>
+      </main>
 
       {isManualModalOpen && <ManualAssetEntry onClose={() => { setIsManualModalOpen(false); setEditingAsset(undefined); }} onSave={handleSaveAsset} asset={editingAsset} accounts={accounts} exchangeRate={dynamicExchangeRate} />}
       {isTransactionModalOpen && <ManualTransactionEntry onClose={() => { setIsTransactionModalOpen(false); setEditingTransaction(undefined); }} onSave={handleSaveTransaction} transaction={editingTransaction} assets={assets} accounts={accounts} exchangeRate={dynamicExchangeRate} />}
       {deletingAsset && <DeleteConfirmModal asset={deletingAsset} onClose={() => setDeletingAsset(null)} onConfirm={confirmDeleteAsset} />}
 
-      {/* 설정 사이드 메뉴 복구 */}
+      <nav className="h-20 bg-white/90 backdrop-blur-xl border-t border-slate-100 flex items-center justify-around px-2 pb-safe shadow-top shrink-0 relative z-40">
+        <NavLink to="/" icon={<Home size={22} />} label="홈" />
+        <NavLink to="/assets" icon={<Wallet size={22} />} label="자산" />
+        <NavLink to="/history" icon={<History size={22} />} label="거래" />
+        <NavLink to="/advisor" icon={<Cpu size={22} />} label="AI 비서" />
+        <NavLink to="/analytics" icon={<LineChart size={22} />} label="분석" />
+        <button onClick={() => setIsSettingsOpen(true)} className="flex flex-col items-center gap-1.5 pb-1 text-slate-300">
+          <Settings size={22} />
+          <span className="text-[9px] font-black uppercase">설정</span>
+        </button>
+      </nav>
+
       {isSettingsOpen && (
-        <div className="absolute inset-0 z-[150] bg-slate-900/50 backdrop-blur-sm" onClick={() => setIsSettingsOpen(false)}>
-          <div className="absolute top-0 right-0 bottom-0 w-3/4 max-w-sm bg-white shadow-2xl p-6 overflow-y-auto animate-in slide-in-from-right duration-300" onClick={e => e.stopPropagation()}>
-            <div className="flex items-center justify-between mb-8">
-              <h2 className="text-xl font-black text-slate-800">설정</h2>
-              <button onClick={() => setIsSettingsOpen(false)}><X size={24} className="text-slate-400" /></button>
+        <div className="fixed inset-0 z-[100] flex justify-end">
+          <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm animate-in fade-in" onClick={() => setIsSettingsOpen(false)}></div>
+          <div className="relative w-80 bg-white h-full shadow-2xl animate-in slide-in-from-right duration-300 flex flex-col">
+            <div className="p-8 border-b border-slate-50 flex items-center justify-between">
+              <div><h3 className="text-xl font-black text-slate-800">애플리케이션 설정</h3><p className="text-[10px] font-black text-indigo-600 uppercase tracking-widest mt-0.5">App Configuration</p></div>
+              <button onClick={() => setIsSettingsOpen(false)} className="p-2 bg-slate-50 rounded-xl text-slate-400"><X size={20}/></button>
             </div>
-            <div className="space-y-8">
-              <section>
-                <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4">Shortcuts</h3>
-                <button onClick={() => { navigate('/history'); setIsSettingsOpen(false); }} className="w-full p-4 bg-slate-50 rounded-2xl flex items-center justify-between group hover:bg-indigo-50 transition-all">
-                  <div className="flex items-center gap-3">
-                    <div className="p-2 bg-white rounded-xl shadow-sm text-slate-400 group-hover:text-indigo-600 transition-colors"><History size={18} /></div>
-                    <span className="text-xs font-bold text-slate-700">거래 내역 조회</span>
-                  </div>
-                  <ChevronRight size={16} className="text-slate-300" />
-                </button>
-              </section>
-
-              <section>
-                <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4">Local Backup</h3>
-                <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100">
-                  <div className="flex gap-2 mb-3">
-                    <button onClick={handleExportData} className="flex-1 py-3 bg-white rounded-xl shadow-sm text-[10px] font-black text-slate-600 flex flex-col items-center gap-1 active:scale-95 transition-all">
-                      <Download size={16} className="text-indigo-600" />내보내기
-                    </button>
-                    <button onClick={() => fileInputRef.current?.click()} className="flex-1 py-3 bg-white rounded-xl shadow-sm text-[10px] font-black text-slate-600 flex flex-col items-center gap-1 active:scale-95 transition-all">
-                      <Upload size={16} className="text-emerald-600" />불러오기
-                    </button>
-                  </div>
-                </div>
-              </section>
-
-              <section>
-                <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4">Cloud Sync</h3>
-                {!syncConfig.apiKey ? (
-                  <div className="space-y-3">
-                    <input type="password" placeholder="JSONBin Master Key" className="w-full p-4 bg-slate-50 rounded-xl text-xs font-bold border border-slate-200 outline-none focus:border-indigo-500" value={inputApiKey} onChange={(e) => setInputApiKey(e.target.value)} />
-                    <input type="text" placeholder="Bin ID (선택)" className="w-full p-4 bg-slate-50 rounded-xl text-xs font-bold border border-slate-200 outline-none focus:border-indigo-500" value={inputBinId} onChange={(e) => setInputBinId(e.target.value)} />
-                    <button onClick={handleCloudLogin} disabled={isSyncing} className="w-full py-4 bg-indigo-600 text-white rounded-xl font-black text-xs flex items-center justify-center gap-2">
-                      {isSyncing ? <Loader2 size={14} className="animate-spin" /> : <CloudCog size={14} />} 연동하기
-                    </button>
-                  </div>
-                ) : (
-                  <div className="bg-indigo-50 p-5 rounded-2xl border border-indigo-100">
-                    <div className="flex items-center gap-2 mb-2"><Cloud size={16} className="text-indigo-600" /><span className="text-xs font-black text-indigo-900">클라우드 연동됨</span></div>
-                    <p className="text-[9px] font-bold text-slate-500 mb-4 break-all">ID: {syncConfig.binId}</p>
-                    <div className="grid grid-cols-2 gap-2 mb-3">
-                      <button onClick={() => handleSync('FORCE_PUSH')} disabled={isSyncing} className="py-2 bg-white text-indigo-600 rounded-lg text-[9px] font-black shadow-sm">올리기</button>
-                      <button onClick={() => handleSync('FORCE_PULL')} disabled={isSyncing} className="py-2 bg-white text-indigo-600 rounded-lg text-[9px] font-black shadow-sm">내리기</button>
+            <div className="flex-1 overflow-y-auto no-scrollbar p-6 space-y-8">
+              <section className="space-y-4">
+                <h4 className="text-[11px] font-black text-slate-400 uppercase tracking-[0.2em] px-1 flex items-center gap-2"><CloudCog size={14} className="text-indigo-400" /> 클라우드 동기화</h4>
+                <div className="bg-slate-50 p-5 rounded-[2rem] border border-slate-100 space-y-4">
+                  {syncConfig.binId ? (
+                    <div className="space-y-3">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 bg-emerald-100 text-emerald-600 rounded-xl flex items-center justify-center"><CheckCircle2 size={20}/></div>
+                        <div><p className="text-xs font-black text-slate-800">동기화 활성화됨</p><p className="text-[9px] font-bold text-slate-400">ID: {syncConfig.binId.substring(0, 10)}...</p></div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <button onClick={() => handleSync('FORCE_PUSH')} className="py-2.5 bg-white border border-slate-200 text-indigo-600 rounded-xl text-[10px] font-black hover:bg-indigo-50 transition-all flex items-center justify-center gap-1">올리기</button>
+                        <button onClick={() => handleSync('FORCE_PULL')} className="py-2.5 bg-white border border-slate-200 text-indigo-600 rounded-xl text-[10px] font-black hover:bg-indigo-50 transition-all flex items-center justify-center gap-1">내리기</button>
+                      </div>
                     </div>
-                    <button onClick={() => { setSyncConfig({apiKey:'', binId:'', lastSynced:'', autoSync: false}); showToast('연동 해제됨'); }} className="w-full py-2 bg-white text-rose-500 rounded-lg text-[9px] font-black shadow-sm">연동 해제</button>
-                  </div>
-                )}
-              </section>
-
-              <section>
-                <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4">Account</h3>
-                <button onClick={handleLogout} className="w-full p-4 bg-white border border-slate-200 rounded-2xl flex items-center justify-between group hover:bg-rose-50 hover:border-rose-100 transition-all">
-                  <div className="flex items-center gap-3">
-                    <div className="p-2 bg-slate-50 rounded-xl text-slate-400 group-hover:text-rose-600"><LogOut size={18} /></div>
-                    <span className="text-xs font-bold text-slate-700">로그아웃</span>
-                  </div>
-                  <ChevronRight size={16} className="text-slate-300" />
-                </button>
-                <div className="mt-4 p-4 bg-slate-50 border border-slate-100 rounded-2xl">
-                  <button onClick={() => { if(window.confirm("정말로 모든 데이터를 삭제하고 초기화하시겠습니까?")) { localStorage.clear(); window.location.reload(); } }} className="w-full py-3 bg-white border border-slate-200 text-rose-500 rounded-xl text-[10px] font-black">데이터 완전 초기화</button>
+                  ) : (
+                    <div className="space-y-3">
+                      <input type="password" placeholder="JSONBin Master Key" value={inputApiKey} onChange={e => setInputApiKey(e.target.value)} className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl text-xs font-bold outline-none focus:border-indigo-500" />
+                      <button onClick={handleCloudLogin} className="w-full py-3 bg-indigo-600 text-white rounded-xl text-xs font-black shadow-lg shadow-indigo-100 active:scale-95 transition-all">클라우드 연결</button>
+                    </div>
+                  )}
                 </div>
               </section>
+              <section className="space-y-4">
+                <h4 className="text-[11px] font-black text-slate-400 uppercase tracking-[0.2em] px-1 flex items-center gap-2"><Database size={14} className="text-indigo-400" /> 로컬 데이터 관리</h4>
+                <div className="grid grid-cols-2 gap-3">
+                  <button onClick={handleExportData} className="p-4 bg-slate-50 border border-slate-100 rounded-2xl flex flex-col items-center gap-2 hover:bg-white hover:border-indigo-200 transition-all"><Download size={18} className="text-indigo-500" /><span className="text-[10px] font-black">내보내기</span></button>
+                  <button onClick={() => fileInputRef.current?.click()} className="p-4 bg-slate-50 border border-slate-100 rounded-2xl flex flex-col items-center gap-2 hover:bg-white hover:border-indigo-200 transition-all"><Upload size={18} className="text-indigo-500" /><span className="text-[10px] font-black">불러오기</span></button>
+                </div>
+                <input type="file" ref={fileInputRef} className="hidden" accept=".json" onChange={handleImportData} />
+              </section>
+              <section className="space-y-3">
+                <button onClick={handleLogout} className="w-full py-4 bg-slate-100 text-slate-600 rounded-2xl font-black text-xs flex items-center justify-center gap-2 hover:bg-slate-200 transition-all"><LogOut size={16} /> 로그아웃</button>
+                <button onClick={handleClearData} className="w-full py-4 bg-rose-50 text-rose-500 rounded-2xl font-black text-xs flex items-center justify-center gap-2 hover:bg-rose-100 transition-all"><Trash2 size={16} /> 초기화</button>
+              </section>
+            </div>
+            <div className="p-8 border-t border-slate-50 bg-slate-50 flex flex-col gap-2">
+               <p className="text-[9px] font-black text-slate-300 uppercase tracking-widest text-center">PortFlow v1.0.4</p>
+               <p className="text-[10px] font-black text-indigo-400 uppercase tracking-[0.2em] text-center">Build: 커밋1</p>
             </div>
           </div>
+        </div>
+      )}
+
+      {toast && (
+        <div className="fixed top-12 left-1/2 -translate-x-1/2 z-[300] bg-slate-900 text-white px-6 py-3 rounded-2xl text-xs font-black shadow-2xl flex items-center gap-3 animate-in slide-in-from-top-2">
+          <Sparkles size={16} className="text-indigo-400" /> {toast}
         </div>
       )}
     </div>
   );
 };
 
-const App: React.FC = () => <HashRouter><AppContent /></HashRouter>;
+const App: React.FC = () => {
+  return (
+    <HashRouter>
+      <AppContent />
+    </HashRouter>
+  );
+};
+
 export default App;

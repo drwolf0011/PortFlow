@@ -23,6 +23,42 @@ interface AssetListProps {
   accounts: Account[];
 }
 
+// 자산관리유형별 정렬 우선순위 정의
+const TYPE_PRIORITY: Record<string, number> = {
+  [AccountType.GENERAL]: 1,
+  [AccountType.ISA]: 2,
+  [AccountType.PENSION]: 3,
+  [AccountType.IRP]: 4,
+  [AccountType.DC]: 5
+};
+
+// 기관별 브랜드 컬러 정의 (배경, 텍스트, 테두리)
+export const getInstitutionColor = (name: string) => {
+  const n = name.replace(/\s/g, '');
+  if (n.includes('삼성')) return 'bg-blue-50 text-blue-600 border-blue-100';
+  if (n.includes('미래')) return 'bg-orange-50 text-orange-600 border-orange-100';
+  if (n.includes('KB') || n.includes('국민')) return 'bg-amber-50 text-amber-700 border-amber-100';
+  if (n.includes('신한')) return 'bg-sky-100 text-sky-700 border-sky-200';
+  if (n.includes('NH') || n.includes('농협')) return 'bg-emerald-50 text-emerald-600 border-emerald-100';
+  if (n.includes('한국투자') || n.includes('한투')) return 'bg-rose-50 text-rose-600 border-rose-100';
+  if (n.includes('키움')) return 'bg-purple-50 text-purple-600 border-purple-100';
+  if (n.includes('토스')) return 'bg-indigo-50 text-indigo-600 border-indigo-100';
+  if (n.includes('카카오')) return 'bg-yellow-50 text-yellow-700 border-yellow-100';
+  if (n.includes('하나')) return 'bg-teal-50 text-teal-600 border-teal-100';
+  if (n.includes('우리')) return 'bg-blue-100 text-blue-800 border-blue-200';
+  
+  // 기타 기관을 위한 해싱 기반 색상 생성
+  const colors = [
+    'bg-slate-50 text-slate-500 border-slate-100',
+    'bg-gray-50 text-gray-500 border-gray-100',
+    'bg-zinc-50 text-zinc-500 border-zinc-100',
+    'bg-neutral-50 text-neutral-500 border-neutral-100'
+  ];
+  let hash = 0;
+  for (let i = 0; i < n.length; i++) hash = n.charCodeAt(i) + ((hash << 5) - hash);
+  return colors[Math.abs(hash) % colors.length];
+};
+
 const AssetList: React.FC<AssetListProps> = ({ 
   assets, onAddAsset, onDeleteAsset, onEditAsset, onSync, 
   onRefreshPrices, isRefreshing, exchangeRate, accounts 
@@ -32,12 +68,38 @@ const AssetList: React.FC<AssetListProps> = ({
   const [isAccountSheetOpen, setIsAccountSheetOpen] = useState(false);
   
   const filtered = useMemo(() => {
-    return assets.filter(a => {
-      const matchType = activeType === 'ALL' || a.type === activeType;
-      const matchAccount = selectedAccountId === 'ALL' || a.accountId === selectedAccountId;
-      return matchType && matchAccount;
-    });
-  }, [assets, activeType, selectedAccountId]);
+    return [...assets]
+      .filter(a => {
+        const matchType = activeType === 'ALL' || a.type === activeType;
+        const matchAccount = selectedAccountId === 'ALL' || a.accountId === selectedAccountId;
+        return matchType && matchAccount;
+      })
+      .sort((a, b) => {
+        const accA = accounts.find(acc => acc.id === a.accountId);
+        const accB = accounts.find(acc => acc.id === b.accountId);
+        
+        const typeA = accA?.type || a.managementType || AccountType.GENERAL;
+        const typeB = accB?.type || b.managementType || AccountType.GENERAL;
+
+        const instA = a.institution || '';
+        const instB = b.institution || '';
+        const instComp = instA.localeCompare(instB, 'ko-KR');
+        if (instComp !== 0) return instComp;
+
+        const priorityA = TYPE_PRIORITY[typeA] || 99;
+        const priorityB = TYPE_PRIORITY[typeB] || 99;
+        if (priorityA !== priorityB) return priorityA - priorityB;
+
+        const nicknameA = accA?.nickname || '';
+        const nicknameB = accB?.nickname || '';
+        const accComp = nicknameA.localeCompare(nicknameB, 'ko-KR');
+        if (accComp !== 0) return accComp;
+
+        const valA = (a.currentPrice || 0) * (a.quantity || 0) * (a.currency === 'USD' ? exchangeRate : 1);
+        const valB = (b.currentPrice || 0) * (b.quantity || 0) * (b.currency === 'USD' ? exchangeRate : 1);
+        return valB - valA;
+      });
+  }, [assets, activeType, selectedAccountId, accounts, exchangeRate]);
 
   const filteredStats = useMemo(() => {
     let total = 0;
@@ -77,7 +139,6 @@ const AssetList: React.FC<AssetListProps> = ({
           <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-0.5">Asset Inventory</p>
         </div>
         <div className="flex items-center gap-2">
-          {/* 계좌 관리 버튼 */}
           <Link 
             to="/accounts"
             className="p-3 bg-white text-slate-400 rounded-2xl border border-slate-100 shadow-sm active:scale-95 transition-all hover:text-indigo-600"
@@ -86,7 +147,6 @@ const AssetList: React.FC<AssetListProps> = ({
             <CreditCard size={18} />
           </Link>
           
-          {/* 자산 동기화 버튼 */}
           <button 
             onClick={onSync}
             className="p-3 bg-white text-slate-400 rounded-2xl border border-slate-100 shadow-sm active:scale-95 transition-all hover:text-indigo-600"
@@ -95,7 +155,6 @@ const AssetList: React.FC<AssetListProps> = ({
             <RotateCcw size={18} />
           </button>
 
-          {/* 시세 갱신 버튼 */}
           <button 
             onClick={onRefreshPrices}
             disabled={isRefreshing}
@@ -105,7 +164,6 @@ const AssetList: React.FC<AssetListProps> = ({
             <RefreshCw size={18} className={isRefreshing ? 'animate-spin' : ''} />
           </button>
           
-          {/* 자산 추가 버튼 */}
           <button 
             onClick={onAddAsset}
             className="flex items-center gap-2 px-4 py-3 bg-indigo-600 text-white rounded-2xl text-[13px] font-black shadow-lg shadow-indigo-100 active:scale-95 transition-all"
@@ -143,7 +201,6 @@ const AssetList: React.FC<AssetListProps> = ({
 
       {/* Integrated Filter UI */}
       <div className="space-y-3">
-        {/* Account Selector (List Type Trigger) */}
         <button 
           onClick={() => setIsAccountSheetOpen(true)}
           className="w-full flex items-center justify-between p-4 bg-white border border-slate-200 rounded-2xl shadow-sm hover:border-indigo-600 transition-all group"
@@ -160,7 +217,6 @@ const AssetList: React.FC<AssetListProps> = ({
           <ChevronDown size={18} className="text-slate-300 group-hover:text-indigo-600 transition-colors" />
         </button>
 
-        {/* Asset Type Filters (Horizontal Chips) */}
         <div className="flex overflow-x-auto no-scrollbar gap-2 px-1">
           <FilterChip 
             active={activeType === 'ALL'} 
@@ -189,17 +245,20 @@ const AssetList: React.FC<AssetListProps> = ({
           const isPlus = profit > 0;
           const isZero = Math.abs(profit) < 1;
 
+          const linkedAccount = accounts.find(acc => acc.id === asset.accountId);
+          const displayManagementType = linkedAccount?.type || asset.managementType || AccountType.GENERAL;
+
           return (
             <div key={asset.id} className="bg-white rounded-[2rem] p-6 shadow-sm border border-slate-50 relative group transition-all hover:shadow-xl hover:border-indigo-100">
               <div className="flex justify-between items-start mb-5">
                 <div className="flex items-center gap-4">
-                  <div className="w-12 h-12 bg-slate-50 rounded-2xl flex items-center justify-center font-black text-xs text-slate-400 border border-slate-100 group-hover:bg-indigo-600 group-hover:text-white transition-all">
+                  <div className={`w-12 h-12 rounded-2xl flex items-center justify-center font-black text-xs border transition-all ${getInstitutionColor(asset.institution)}`}>
                     {asset.institution.substring(0,2)}
                   </div>
                   <div>
                     <div className="flex items-center gap-2 mb-0.5">
-                      <span className={`px-2 py-0.5 border rounded text-[8px] font-black uppercase ${getManagementTypeBadge(asset.managementType)}`}>
-                        {asset.managementType || AccountType.GENERAL}
+                      <span className={`px-2 py-0.5 border rounded text-[8px] font-black uppercase ${getManagementTypeBadge(displayManagementType)}`}>
+                        {displayManagementType}
                       </span>
                       {asset.currency === 'USD' && (
                         <span className="flex items-center gap-0.5 px-1.5 py-0.5 bg-amber-50 text-amber-600 rounded text-[8px] font-black uppercase">

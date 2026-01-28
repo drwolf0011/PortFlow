@@ -1,8 +1,7 @@
 
 import React, { useState, useMemo, useEffect } from 'react';
 import { Transaction, TransactionType, Account } from '../types';
-import { Search, Filter, History, TrendingUp, TrendingDown, Inbox, CreditCard, Trash2, AlertCircle, Edit3, MoreVertical, Sparkles, Loader2, X } from 'lucide-react';
-import { classifyTransactionTypes } from '../services/geminiService';
+import { Search, Filter, History, TrendingUp, TrendingDown, Inbox, CreditCard, Trash2, AlertCircle, Edit3, MoreVertical, Sparkles, Loader2, X, Plus } from 'lucide-react';
 
 interface TransactionHistoryProps {
   transactions: Transaction[];
@@ -10,14 +9,14 @@ interface TransactionHistoryProps {
   onDelete: (id: string) => void;
   onEdit: (tx: Transaction) => void;
   onUpdate: (txs: Transaction[]) => void;
+  onAdd: () => void;
   exchangeRate: number;
 }
 
-const TransactionHistory: React.FC<TransactionHistoryProps> = ({ transactions, accounts, onDelete, onEdit, onUpdate, exchangeRate }) => {
+const TransactionHistory: React.FC<TransactionHistoryProps> = ({ transactions, accounts, onDelete, onEdit, onUpdate, onAdd, exchangeRate }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [filterAccountId, setFilterAccountId] = useState<string | null>(null);
   const [filterType, setFilterType] = useState<'ALL' | TransactionType>('ALL');
-  const [isClassifying, setIsClassifying] = useState(false);
   const [activeHintLabel, setActiveHintLabel] = useState<string | null>(null);
 
   // 페이지 진입 시 자산 목록으로부터 전달된 필터 힌트(이름 + 계좌ID)가 있는지 확인
@@ -81,33 +80,6 @@ const TransactionHistory: React.FC<TransactionHistoryProps> = ({ transactions, a
     setActiveHintLabel(null);
   };
 
-  const handleAutoClassify = async () => {
-    if (filteredTransactions.length === 0) return;
-    setIsClassifying(true);
-    
-    const targets = filteredTransactions.map(t => ({ id: t.id, name: t.name, institution: t.institution }));
-    
-    try {
-      const results = await classifyTransactionTypes(targets);
-      
-      if (results.length > 0) {
-        const classificationMap = new Map(results.map(r => [r.id, r.type]));
-        
-        const updatedTransactions = transactions.map(t => {
-          const newType = classificationMap.get(t.id);
-          return newType ? { ...t, assetType: newType } : t;
-        });
-        
-        onUpdate(updatedTransactions);
-      }
-    } catch (e) {
-      console.error(e);
-      alert("자동 분류 중 오류가 발생했습니다.");
-    } finally {
-      setIsClassifying(false);
-    }
-  };
-
   return (
     <div className="p-5 space-y-6 pb-28">
       <div className="flex flex-col gap-4">
@@ -117,12 +89,11 @@ const TransactionHistory: React.FC<TransactionHistoryProps> = ({ transactions, a
             <h3 className="text-xl font-black text-slate-800 tracking-tight">거래 기록 아카이브</h3>
           </div>
           <button 
-            onClick={handleAutoClassify}
-            disabled={isClassifying || filteredTransactions.length === 0}
-            className={`flex items-center gap-1.5 px-4 py-2 bg-indigo-50 text-indigo-600 rounded-full text-[10px] font-black border border-indigo-100 active:scale-95 transition-all ${isClassifying ? 'opacity-70 cursor-not-allowed' : ''}`}
+            onClick={onAdd}
+            className="flex items-center gap-1.5 px-4 py-2 bg-indigo-600 text-white rounded-full text-[10px] font-black shadow-sm active:scale-95 transition-all"
           >
-            {isClassifying ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
-            AI 자동 분류
+            <Plus size={14} />
+            거래 등록
           </button>
         </div>
         

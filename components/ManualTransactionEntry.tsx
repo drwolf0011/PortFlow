@@ -148,7 +148,7 @@ const ManualTransactionEntry: React.FC<ManualTransactionEntryProps> = ({ onClose
       <div className="relative bg-white w-full max-w-lg rounded-[2.5rem] shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200 flex flex-col max-h-[90dvh]">
         <div className="px-6 py-5 border-b border-slate-100 flex items-center justify-between bg-white shrink-0">
           <div>
-            <h3 className="text-xl font-black text-slate-800 tracking-tight">{transaction ? '거래 정보 수정' : '거래 기록 입력'}</h3>
+            <h3 className="text-xl font-black text-slate-800 tracking-tight">{transaction ? '거래 정보 수정' : '거래 등록'}</h3>
             <p className="text-[10px] text-indigo-600 font-bold uppercase tracking-widest">Transaction Registry</p>
           </div>
           <button onClick={onClose} className="p-2 hover:bg-slate-50 rounded-full text-slate-400 transition-colors"><X size={20} /></button>

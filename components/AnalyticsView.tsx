@@ -12,6 +12,7 @@ import {
 /* Fix: Using wildcard import for react-router-dom to resolve named export errors */
 import * as ReactRouterDOM from 'react-router-dom';
 const { Link } = ReactRouterDOM;
+import { getInstitutionColor } from './AssetList';
 
 interface AnalyticsViewProps {
   history: {date: string, value: number}[];
@@ -97,7 +98,6 @@ const AnalyticsView: React.FC<AnalyticsViewProps> = ({ history, assets, exchange
         </div>
       </div>
 
-      {/* Fix: Wrap className string in quotes to resolve 'boolean' not assignable to 'string' error */}
       <div className="p-5 space-y-6">
         <section className={`rounded-[2.5rem] p-7 text-white shadow-xl relative overflow-hidden transition-colors duration-500 ${region === 'ALL' ? 'bg-indigo-600' : region === 'KRW' ? 'bg-blue-600' : 'bg-amber-600'}`}>
           <div className="relative z-10">
@@ -147,7 +147,9 @@ const AnalyticsView: React.FC<AnalyticsViewProps> = ({ history, assets, exchange
                       <div key={a.id} className="bg-slate-50/50 border border-slate-100/50 rounded-2xl p-4 transition-all hover:bg-white hover:shadow-md hover:border-indigo-100">
                         <div className="flex justify-between items-start">
                           <div className="flex items-center gap-3">
-                            <div className={`w-9 h-9 rounded-xl flex items-center justify-center text-[10px] font-black ${a.currency === 'KRW' ? 'bg-blue-50 text-blue-600' : 'bg-amber-50 text-amber-600'}`}>{a.ticker ? a.ticker.substring(0, 4) : a.name.substring(0, 1)}</div>
+                            <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-[10px] font-black border transition-all ${getInstitutionColor(a.institution)}`}>
+                              {a.institution.substring(0, 2)}
+                            </div>
                             <div><p className="text-xs font-black text-slate-800">{a.name}</p><p className="text-[9px] font-bold text-slate-400">{a.institution}</p></div>
                           </div>
                           <div className="text-right">
