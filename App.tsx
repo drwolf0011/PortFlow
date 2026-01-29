@@ -273,6 +273,16 @@ const AppContent: React.FC = () => {
     }
   }, [syncConfig, getCurrentAppData, applyAppData, showToast]);
 
+  // 로그인 성공 1초 후 클라우드에서 최신 데이터를 자동으로 가져오는 로직
+  useEffect(() => {
+    if (isAuthenticated && syncConfig.binId && syncConfig.apiKey) {
+      const autoSyncTimer = setTimeout(() => {
+        handleSync('FORCE_PULL');
+      }, 1000);
+      return () => clearTimeout(autoSyncTimer);
+    }
+  }, [isAuthenticated]);
+
   const handleUpdatePrices = useCallback(async () => {
     if (assets.length === 0) {
       showToast("갱신할 자산이 없습니다.");

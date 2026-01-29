@@ -7,7 +7,7 @@ import { Asset } from '../types';
 import { 
   ArrowLeft, TrendingUp, TrendingDown, Activity, 
   Info, BarChart3, Globe, MapPin,
-  Layers, Package, Tag, ArrowRight
+  Layers, Package, Tag, ArrowRight, AlertCircle
 } from 'lucide-react';
 /* Fix: Using wildcard import for react-router-dom to resolve named export errors */
 import * as ReactRouterDOM from 'react-router-dom';
@@ -23,6 +23,14 @@ interface AnalyticsViewProps {
 const AnalyticsView: React.FC<AnalyticsViewProps> = ({ history, assets, exchangeRate }) => {
   const [range, setRange] = useState('1M');
   const [region, setRegion] = useState<'ALL' | 'KRW' | 'USD'>('ALL');
+
+  // 전체 자산 합계 (비중 계산용)
+  const globalTotalVal = useMemo(() => {
+    return assets.reduce((acc, a) => {
+      const mult = a.currency === 'USD' ? exchangeRate : 1;
+      return acc + (a.currentPrice || 0) * (a.quantity || 0) * mult;
+    }, 0);
+  }, [assets, exchangeRate]);
 
   // 필터링된 현재 자산 통계 계산
   const currentFilteredStats = useMemo(() => {
@@ -44,40 +52,49 @@ const AnalyticsView: React.FC<AnalyticsViewProps> = ({ history, assets, exchange
 
     const profit = totalVal - totalCost;
     const profitRate = totalCost > 0 ? (profit / totalCost) * 100 : 0;
+    const ratio = globalTotalVal > 0 ? totalVal / globalTotalVal : 0;
 
-    return { totalVal, totalCost, profit, profitRate, count: filtered.length };
-  }, [assets, region, exchangeRate]);
+    return { totalVal, totalCost, profit, profitRate, count: filtered.length, ratio };
+  }, [assets, region, exchangeRate, globalTotalVal]);
 
-  // 지역별 그룹화된 자산 목록
+  // 지역별 그룹화된 자산 목록 (평가 금액 내림차순 정렬 추가)
   const groupedAssets = useMemo(() => {
     const filtered = assets.filter(a => region === 'ALL' || a.currency === region);
     const groups: Record<string, Asset[]> = {};
     const currencies = ['KRW', 'USD'];
+    
     currencies.forEach(c => {
       const items = filtered.filter(a => a.currency === c);
-      if (items.length > 0) groups[c] = items;
+      if (items.length > 0) {
+        // 평가 금액(원화 환산) 기준 내림차순 정렬
+        items.sort((a, b) => {
+          const valA = (a.currentPrice || 0) * (a.quantity || 0) * (a.currency === 'USD' ? exchangeRate : 1);
+          const valB = (b.currentPrice || 0) * (b.quantity || 0) * (b.currency === 'USD' ? exchangeRate : 1);
+          return valB - valA;
+        });
+        groups[c] = items;
+      }
     });
     return groups;
-  }, [assets, region]);
+  }, [assets, region, exchangeRate]);
 
-  // 히스토리 차트 데이터
+  // 히스토리 차트 데이터 (선택된 지역 비중에 맞춰 보정)
   const chartData = useMemo(() => {
     const historyArray = (history as any[]) || [];
+    const ratio = currentFilteredStats?.ratio ?? 1;
+    
     return historyArray.map(h => ({
       name: h.date.split('-').slice(1).join('/'),
-      value: h.value
+      value: h.value * ratio // 전체 히스토리 값에 현재 지역 비중을 곱해 추정치 산출
     }));
-  }, [history]);
+  }, [history, currentFilteredStats]);
 
-  // 히스토리 기반 통계
-  const historyStats = useMemo(() => {
-    const historyArray = (history as any[]) || [];
-    if (historyArray.length === 0) return null;
-    const values = historyArray.map(h => h.value);
-    const max = Math.max(...values);
-    const min = Math.min(...values);
-    return { max, min };
-  }, [history]);
+  // 테마 색상 결정
+  const themeColor = useMemo(() => {
+    if (region === 'KRW') return '#2563eb'; // Blue-600
+    if (region === 'USD') return '#d97706'; // Amber-600
+    return '#4F46E5'; // Indigo-600
+  }, [region]);
 
   return (
     <div className="flex flex-col min-h-full bg-[#F4F7FB] pb-32">
@@ -110,17 +127,50 @@ const AnalyticsView: React.FC<AnalyticsViewProps> = ({ history, assets, exchange
           </div>
         </section>
 
-        <section className="bg-white rounded-[2.5rem] p-6 shadow-sm border border-slate-50">
-          <div className="flex items-center justify-between mb-8"><h4 className="font-black text-slate-800 text-sm">포트폴리오 총액 추이</h4></div>
+        <section className="bg-white rounded-[2.5rem] p-6 shadow-sm border border-slate-50 overflow-hidden">
+          <div className="flex items-center justify-between mb-8">
+            <h4 className="font-black text-slate-800 text-sm flex items-center gap-2">
+              <BarChart3 size={18} style={{ color: themeColor }} />
+              {region === 'ALL' ? '포트폴리오 총액 추이' : region === 'KRW' ? '국내 자산 성장 추이' : '해외 자산 성장 추이'}
+            </h4>
+          </div>
           <div className="h-48 w-full">
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart data={chartData}>
-                <defs><linearGradient id="detailedColor" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#4F46E5" stopOpacity={0.15}/><stop offset="95%" stopColor="#4F46E5" stopOpacity={0}/></linearGradient></defs>
-                <XAxis dataKey="name" hide /><YAxis hide domain={['dataMin - 10000', 'dataMax + 10000']} /><Tooltip contentStyle={{ borderRadius: '1rem', border: 'none', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)', padding: '8px 12px' }} itemStyle={{ fontSize: '11px', fontWeight: '900', color: '#4F46E5' }} labelStyle={{ fontSize: '9px', color: '#94a3b8', fontWeight: 'bold' }} />
-                <Area type="monotone" dataKey="value" stroke="#4F46E5" strokeWidth={3} fillOpacity={1} fill="url(#detailedColor)" />
+                <defs>
+                  <linearGradient id="dynamicColor" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor={themeColor} stopOpacity={0.2}/>
+                    <stop offset="95%" stopColor={themeColor} stopOpacity={0}/>
+                  </linearGradient>
+                </defs>
+                <XAxis dataKey="name" hide />
+                <YAxis hide domain={['auto', 'auto']} />
+                <Tooltip 
+                  contentStyle={{ borderRadius: '1rem', border: 'none', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)', padding: '8px 12px' }} 
+                  itemStyle={{ fontSize: '11px', fontWeight: '900', color: themeColor }} 
+                  labelStyle={{ fontSize: '9px', color: '#94a3b8', fontWeight: 'bold' }} 
+                  formatter={(value: number) => [`${Math.floor(value).toLocaleString()}원`, '평가액']}
+                />
+                <Area 
+                  type="monotone" 
+                  dataKey="value" 
+                  stroke={themeColor} 
+                  strokeWidth={3} 
+                  fillOpacity={1} 
+                  fill="url(#dynamicColor)" 
+                  animationDuration={1000}
+                />
               </AreaChart>
             </ResponsiveContainer>
           </div>
+          {region !== 'ALL' && (
+            <div className="mt-4 flex items-center gap-2 px-2 py-2 bg-slate-50 rounded-xl">
+              <AlertCircle size={12} className="text-slate-400" />
+              <p className="text-[9px] font-bold text-slate-400">
+                위 그래프는 현재 {region} 자산 비중({((currentFilteredStats?.ratio || 0) * 100).toFixed(1)}%)을 기반으로 추정한 과거 성장 추이입니다.
+              </p>
+            </div>
+          )}
         </section>
 
         <section className="bg-white rounded-[2.5rem] p-6 shadow-sm border border-slate-50">

@@ -91,14 +91,20 @@ const ManualTransactionEntry: React.FC<ManualTransactionEntryProps> = ({ onClose
   const handleAISearch = async () => {
     if (!searchTerm.trim() || isSearching) return;
     setIsSearching(true);
-    setShowSuggestions(false);
     setSearchResults([]);
     try {
       const results = await searchStockList(searchTerm);
       if (results && results.length > 0) {
         setSearchResults(results);
+        setShowSuggestions(true);
+      } else {
+        alert("검색 결과가 없습니다.");
       }
-    } catch (error) { console.error(error); } finally { setIsSearching(false); }
+    } catch (error) { 
+      console.error(error); 
+    } finally { 
+      setIsSearching(false); 
+    }
   };
 
   const handleApplySearchResult = (info: StockInfo) => {
@@ -196,6 +202,12 @@ const ManualTransactionEntry: React.FC<ManualTransactionEntryProps> = ({ onClose
 
             {showSuggestions && (myAssetSuggestions.length > 0 || searchResults.length > 0) && (
               <div className="absolute top-full left-0 right-0 mt-2 bg-white rounded-[2rem] shadow-2xl border border-slate-100 z-[60] overflow-hidden animate-in slide-in-from-top-2 p-1.5 max-h-80 overflow-y-auto no-scrollbar">
+                {/* 내 자산 추천 목록 */}
+                {myAssetSuggestions.length > 0 && (
+                  <div className="px-4 py-2 text-[9px] font-black text-slate-400 uppercase tracking-widest bg-slate-50/50 rounded-t-xl mb-1">
+                    내 보유 자산
+                  </div>
+                )}
                 {myAssetSuggestions.map((asset) => (
                   <button key={asset.id} type="button" onClick={() => handleSelectAsset(asset)} className="w-full px-4 py-3.5 flex items-center justify-between hover:bg-indigo-50 text-left transition-all rounded-xl border-b border-slate-50 last:border-0 group">
                     <div className="flex items-center gap-3">
@@ -207,6 +219,27 @@ const ManualTransactionEntry: React.FC<ManualTransactionEntryProps> = ({ onClose
                     </div>
                     <div className="text-right">
                       <p className="text-xs font-black text-slate-900">{Math.floor(asset.currentPrice).toLocaleString()} {asset.currency}</p>
+                    </div>
+                  </button>
+                ))}
+
+                {/* AI 검색 결과 목록 */}
+                {searchResults.length > 0 && (
+                  <div className="px-4 py-2 text-[9px] font-black text-indigo-500 uppercase tracking-widest bg-indigo-50/50 mt-1 flex items-center gap-1 rounded-t-xl">
+                    <Sparkles size={10} /> AI 검색 결과
+                  </div>
+                )}
+                {searchResults.map((info, idx) => (
+                  <button key={`search-${idx}`} type="button" onClick={() => handleApplySearchResult(info)} className="w-full px-4 py-3.5 flex items-center justify-between hover:bg-indigo-50 text-left transition-all rounded-xl border-b border-slate-50 last:border-0 group">
+                    <div className="flex items-center gap-3">
+                      <div className="w-9 h-9 bg-indigo-100 text-indigo-600 rounded-xl flex items-center justify-center font-black text-[10px] group-hover:bg-indigo-600 group-hover:text-white transition-colors">{info.type[0]}</div>
+                      <div>
+                        <h4 className="text-xs font-black text-slate-800">{info.name}</h4>
+                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-tighter">{info.ticker || info.market || 'Unknown'}</p>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-xs font-black text-indigo-600">{info.price.toLocaleString()} {info.currency}</p>
                     </div>
                   </button>
                 ))}
