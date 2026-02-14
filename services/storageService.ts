@@ -4,14 +4,21 @@ import { AppData, UserProfile, UsersRegistry } from '../types';
 const BIN_URL = 'https://api.jsonbin.io/v3/b';
 const USERS_REGISTRY_BIN_ID = '6978542e43b1c97be94da269';
 
+export class CloudAuthError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "CloudAuthError";
+  }
+}
+
 const handleResponse = async (response: Response, defaultMessage: string) => {
   if (!response.ok) {
     let errorMessage = defaultMessage;
     if (response.status === 401 || response.status === 403) {
-      throw new Error("클라우드 인증 권한이 없습니다.");
+      throw new CloudAuthError("클라우드 인증 권한이 없습니다. 마스터 키를 확인해주세요.");
     }
     if (response.status === 404) {
-      throw new Error("저장 공간을 찾을 수 없습니다.");
+      throw new Error("저장 공간(Bin)을 찾을 수 없습니다.");
     }
     try {
       const errorData = await response.json();
@@ -34,7 +41,9 @@ export const fetchUsersRegistry = async (apiKey: string): Promise<UsersRegistry>
     const data = await handleResponse(response, '사용자 목록 로드 실패');
     return data as UsersRegistry;
   } catch (error) {
-    // Bin이 비어있거나 없는 경우 초기 구조 반환
+    // 인증 에러인 경우 상위로 전파하여 로컬 모드 유도
+    if (error instanceof CloudAuthError) throw error;
+    // 그 외 일반 네트워크 오류 등은 빈 목록 반환 (신규 가입 유도)
     return { users: [] };
   }
 };

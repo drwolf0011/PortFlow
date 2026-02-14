@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { X, Save, CreditCard, Sparkles, Loader2, Search, CheckCircle2, Building2, Landmark } from 'lucide-react';
+import { X, Save, CreditCard, Sparkles, Loader2, Search, CheckCircle2, Building2, Landmark, Globe } from 'lucide-react';
 import { Asset, AssetType, Account, AccountType } from '../types';
 import { searchStockList, StockInfo } from '../services/geminiService';
 
@@ -18,6 +18,8 @@ const ManualAssetEntry: React.FC<ManualAssetEntryProps> = ({ onClose, onSave, as
     accountId: asset?.accountId || '',
     managementType: asset?.managementType || AccountType.GENERAL,
     name: asset?.name || '',
+    ticker: asset?.ticker || '',
+    exchange: asset?.exchange || '',
     institution: asset?.institution || '',
     type: asset?.type || AssetType.STOCK,
     quantity: asset?.quantity || 0,
@@ -79,6 +81,7 @@ const ManualAssetEntry: React.FC<ManualAssetEntryProps> = ({ onClose, onSave, as
   };
 
   const handleSelectStock = (info: StockInfo) => {
+    // info.ticker format adjustment if needed
     setFormData(prev => ({
       ...prev,
       name: info.name,
@@ -86,7 +89,8 @@ const ManualAssetEntry: React.FC<ManualAssetEntryProps> = ({ onClose, onSave, as
       currentPrice: info.price,
       purchasePrice: prev.purchasePrice || info.price, 
       currency: info.currency as 'KRW' | 'USD',
-      type: info.type as AssetType
+      type: info.type as AssetType,
+      exchange: info.currency === 'USD' ? 'NAS' : '' // Default assumption
     }));
     setSearchTerm(info.name);
     setSearchResults([]);
@@ -97,6 +101,13 @@ const ManualAssetEntry: React.FC<ManualAssetEntryProps> = ({ onClose, onSave, as
     if (!formData.name || !formData.institution) {
       alert("종목명과 금융기관을 입력해주세요."); return;
     }
+
+    if (!formData.ticker) {
+      if(!window.confirm("종목코드(Ticker)가 없으면 실시간 시세 조회가 불가능할 수 있습니다. 그래도 저장하시겠습니까?")) {
+          return;
+      }
+    }
+
     onSave(formData as Asset);
   };
 
@@ -199,6 +210,32 @@ const ManualAssetEntry: React.FC<ManualAssetEntryProps> = ({ onClose, onSave, as
               </div>
             )}
           </div>
+          
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1 flex items-center gap-1">종목코드/티커 <span className="text-indigo-500">*</span></label>
+              <input 
+                type="text" 
+                name="ticker"
+                placeholder="예: 005930, TSLA" 
+                value={formData.ticker} 
+                onChange={handleChange} 
+                className="w-full px-4 py-4 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold outline-none focus:border-indigo-500 focus:bg-white transition-all" 
+              />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">거래소(KIS용)</label>
+              <select name="exchange" value={formData.exchange} onChange={handleChange} className="w-full px-4 py-4 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold appearance-none outline-none focus:border-indigo-500 focus:bg-white transition-all">
+                <option value="">자동/미지정</option>
+                <option value="KRX">한국거래소 (KRX)</option>
+                <option value="NAS">나스닥 (NAS)</option>
+                <option value="NYS">뉴욕 (NYS)</option>
+                <option value="AMS">아멕스 (AMS)</option>
+                <option value="HKS">홍콩 (HKS)</option>
+                <option value="TSE">도쿄 (TSE)</option>
+              </select>
+            </div>
+          </div>
 
           <div className="space-y-1.5">
             <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">금융기관</label>
@@ -239,7 +276,7 @@ const ManualAssetEntry: React.FC<ManualAssetEntryProps> = ({ onClose, onSave, as
           
           <div className="bg-slate-900 rounded-2xl p-5 border border-slate-800 flex justify-between items-center shrink-0 shadow-lg">
             <span className="text-slate-400 font-bold text-sm">현재 환산 평가액</span>
-            <span className="font-black text-emerald-400 text-lg">{totalKRW.toLocaleString()}원</span>
+            <span className="font-black text-emerald-400 text-lg">{Math.floor(totalKRW).toLocaleString()}원</span>
           </div>
 
           <div className="pb-10">

@@ -1,7 +1,7 @@
 
 import React, { useState, useMemo, useEffect } from 'react';
 import { Transaction, TransactionType, Account } from '../types';
-import { Search, Filter, History, TrendingUp, TrendingDown, Inbox, CreditCard, Trash2, AlertCircle, Edit3, MoreVertical, Sparkles, Loader2, X, Plus } from 'lucide-react';
+import { Search, Filter, History, TrendingUp, TrendingDown, Inbox, CreditCard, Trash2, AlertCircle, Edit3, MoreVertical, Sparkles, Loader2, X, Plus, AlertTriangle } from 'lucide-react';
 
 interface TransactionHistoryProps {
   transactions: Transaction[];
@@ -18,6 +18,7 @@ const TransactionHistory: React.FC<TransactionHistoryProps> = ({ transactions, a
   const [filterAccountId, setFilterAccountId] = useState<string | null>(null);
   const [filterType, setFilterType] = useState<'ALL' | TransactionType>('ALL');
   const [activeHintLabel, setActiveHintLabel] = useState<string | null>(null);
+  const [deletingTx, setDeletingTx] = useState<Transaction | null>(null);
 
   // 페이지 진입 시 자산 목록으로부터 전달된 필터 힌트(이름 + 계좌ID)가 있는지 확인
   useEffect(() => {
@@ -60,11 +61,16 @@ const TransactionHistory: React.FC<TransactionHistoryProps> = ({ transactions, a
     return accounts.find(a => a.id === accountId)?.nickname;
   };
 
-  const handleDelete = (e: React.MouseEvent, tx: Transaction) => {
+  const handleDeleteClick = (e: React.MouseEvent, tx: Transaction) => {
     e.preventDefault();
     e.stopPropagation();
-    if (window.confirm(`'${tx.name}' 거래 내역을 영구히 삭제하시겠습니까?\n삭제된 데이터는 복구할 수 없습니다.`)) {
-      onDelete(tx.id);
+    setDeletingTx(tx);
+  };
+
+  const handleConfirmDelete = () => {
+    if (deletingTx) {
+      onDelete(deletingTx.id);
+      setDeletingTx(null);
     }
   };
 
@@ -81,8 +87,9 @@ const TransactionHistory: React.FC<TransactionHistoryProps> = ({ transactions, a
   };
 
   return (
-    <div className="p-5 space-y-6 pb-28">
-      <div className="flex flex-col gap-4">
+    <div className="pb-28">
+      {/* Sticky Header Section */}
+      <div className="sticky top-0 z-20 px-5 py-4 bg-[#F4F7FB]/95 backdrop-blur-xl border-b border-slate-200/50 flex flex-col gap-4 shadow-sm">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="p-2 bg-indigo-600 text-white rounded-xl shadow-lg shadow-indigo-100"><History size={20} /></div>
@@ -152,7 +159,7 @@ const TransactionHistory: React.FC<TransactionHistoryProps> = ({ transactions, a
         </div>
       </div>
 
-      <div className="space-y-4">
+      <div className="p-5 space-y-4">
         {filteredTransactions.length > 0 ? (
           filteredTransactions.map((tx) => {
             const isBuy = tx.type === TransactionType.BUY;
@@ -182,7 +189,7 @@ const TransactionHistory: React.FC<TransactionHistoryProps> = ({ transactions, a
                       <Edit3 size={18} />
                     </button>
                     <button 
-                      onClick={(e) => handleDelete(e, tx)}
+                      onClick={(e) => handleDeleteClick(e, tx)}
                       className="p-3 text-slate-300 hover:text-rose-500 hover:bg-rose-50 rounded-xl transition-all active:scale-90"
                       title="거래 삭제"
                     >
@@ -231,14 +238,36 @@ const TransactionHistory: React.FC<TransactionHistoryProps> = ({ transactions, a
             <p className="font-black">거래 내역이 없습니다.</p>
           </div>
         )}
+
+        <div className="bg-slate-100 p-4 rounded-2xl flex items-center gap-3">
+          <AlertCircle size={16} className="text-slate-400 shrink-0" />
+          <p className="text-[10px] font-bold text-slate-500 leading-relaxed">
+            내역을 삭제하거나 수정하면 자산 현황이 자동으로 재계산되어<br />실제 보유 자산과 실시간으로 동기화됩니다.
+          </p>
+        </div>
       </div>
 
-      <div className="bg-slate-100 p-4 rounded-2xl flex items-center gap-3">
-        <AlertCircle size={16} className="text-slate-400 shrink-0" />
-        <p className="text-[10px] font-bold text-slate-500 leading-relaxed">
-          내역을 삭제하거나 수정하면 자산 현황이 자동으로 재계산되어<br />실제 보유 자산과 실시간으로 동기화됩니다.
-        </p>
-      </div>
+      {deletingTx && (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm animate-in fade-in" onClick={() => setDeletingTx(null)}></div>
+          <div className="relative bg-white w-full max-w-sm rounded-[2rem] p-6 shadow-2xl animate-in zoom-in-95">
+             <div className="flex flex-col items-center text-center mb-6">
+                <div className="w-16 h-16 bg-rose-50 text-rose-500 rounded-3xl flex items-center justify-center mb-4">
+                  <AlertTriangle size={32} />
+                </div>
+                <h3 className="text-lg font-black text-slate-800 mb-2">거래 내역 삭제</h3>
+                <p className="text-xs text-slate-500 font-medium leading-relaxed">
+                  <span className="text-slate-800 font-bold">{deletingTx.name}</span><br/>
+                  이 내역을 삭제하시겠습니까? 삭제 후에는 복구할 수 없습니다.
+                </p>
+             </div>
+             <div className="flex gap-2">
+               <button onClick={handleConfirmDelete} className="flex-1 bg-rose-500 text-white py-3 rounded-xl font-black text-sm active:scale-95 transition-all">삭제</button>
+               <button onClick={() => setDeletingTx(null)} className="flex-1 bg-slate-100 text-slate-600 py-3 rounded-xl font-black text-sm active:scale-95 transition-all">취소</button>
+             </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

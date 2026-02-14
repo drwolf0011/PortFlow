@@ -1,6 +1,7 @@
 
 export enum AssetType {
   STOCK = '주식',
+  BOND = '채권',
   FUND = '펀드',
   ETF = 'ETF',
   GOLD = '금',
@@ -52,6 +53,7 @@ export interface Asset {
   managementType?: AccountType;
   name: string;
   ticker?: string;
+  exchange?: string; // KIS 연동을 위한 거래소 코드 (예: NAS, NYS, 001(코스피))
   type: AssetType;
   institution: string;
   quantity: number;
@@ -132,6 +134,14 @@ export interface SyncConfig {
   lastSynced: string;
   lastSyncedDataTimestamp?: number; 
   autoSync: boolean;
+}
+
+export interface KisConfig {
+  useKis: boolean;
+  serverType: 'REAL' | 'VIRTUAL'; // 실전투자 vs 모의투자
+  appKey: string;
+  appSecret: string;
+  accountNo?: string; // 선택사항 (잔고 조회용)
 }
 
 export interface AppData {

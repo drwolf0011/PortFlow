@@ -12,17 +12,23 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <link rel="apple-touch-icon" href="https://cdn-icons-png.flaticon.com/512/2632/2632283.png">
     
-    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Updated Tailwind CDN to include typography plugin for Markdown rendering -->
+    <script src="https://cdn.tailwindcss.com?plugins=forms,typography,aspect-ratio"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+        
+        * {
+            /* Disable tap highlight color on mobile */
+            -webkit-tap-highlight-color: transparent;
+        }
+
         body {
             font-family: 'Inter', sans-serif;
             background-color: #f4f7fb;
             /* Prevent bounce effect on mobile */
             overscroll-behavior-y: contain;
-            user-select: none;
-            -webkit-tap-highlight-color: transparent;
         }
+
         /* Custom scrollbar for mobile */
         ::-webkit-scrollbar {
             width: 0px;
@@ -105,7 +111,9 @@
     "@google/genai": "https://esm.sh/@google/genai@^1.37.0",
     "recharts": "https://esm.sh/recharts@^3.6.0",
     "lucide-react": "https://esm.sh/lucide-react@^0.562.0",
-    "react-markdown": "https://esm.sh/react-markdown@^9.0.0"
+    "react-markdown": "https://esm.sh/react-markdown@^9.0.0",
+    "@capacitor/cli": "https://esm.sh/@capacitor/cli@^8.0.2",
+    "@capacitor/core": "https://esm.sh/@capacitor/core@^8.1.0"
   }
 }
 </script>

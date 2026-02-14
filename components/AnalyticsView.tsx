@@ -119,9 +119,9 @@ const AnalyticsView: React.FC<AnalyticsViewProps> = ({ history, assets, exchange
         <section className={`rounded-[2.5rem] p-7 text-white shadow-xl relative overflow-hidden transition-colors duration-500 ${region === 'ALL' ? 'bg-indigo-600' : region === 'KRW' ? 'bg-blue-600' : 'bg-amber-600'}`}>
           <div className="relative z-10">
             <p className="text-white/70 text-[10px] font-black uppercase tracking-widest mb-1">{region === 'ALL' ? 'Total Portfolio' : region === 'KRW' ? 'Domestic (KRW)' : 'Overseas (USD)'} Value</p>
-            <h3 className="text-3xl font-black mb-6">{currentFilteredStats?.totalVal.toLocaleString() || 0}원</h3>
+            <h3 className="text-3xl font-black mb-6">{Math.floor(currentFilteredStats?.totalVal || 0).toLocaleString()}원</h3>
             <div className="flex gap-4">
-              <div className="bg-white/10 backdrop-blur-md px-4 py-3 rounded-2xl flex-1"><p className="text-[9px] font-black text-white/60 uppercase mb-0.5">투자 수익</p><p className="text-sm font-black">{currentFilteredStats?.profit.toLocaleString() || 0}원</p></div>
+              <div className="bg-white/10 backdrop-blur-md px-4 py-3 rounded-2xl flex-1"><p className="text-[9px] font-black text-white/60 uppercase mb-0.5">투자 수익</p><p className="text-sm font-black">{Math.floor(currentFilteredStats?.profit || 0).toLocaleString()}원</p></div>
               <div className="bg-white/10 backdrop-blur-md px-4 py-3 rounded-2xl flex-1"><p className="text-[9px] font-black text-white/60 uppercase mb-0.5">수익률</p><p className="text-sm font-black">{currentFilteredStats?.profitRate.toFixed(2) || 0}%</p></div>
             </div>
           </div>

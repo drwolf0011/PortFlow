@@ -3,17 +3,18 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { 
   ShieldCheck, Lock, ChevronRight, X, Fingerprint, 
   AlertCircle, Grid3X3, ArrowRight, UserCircle, Edit3, 
-  Loader2, UserPlus, LogIn, Sparkles
+  Loader2, UserPlus, LogIn, Sparkles, Database, ShieldAlert
 } from 'lucide-react';
-import { fetchUsersRegistry, updateUsersRegistry, createBin } from '../services/storageService';
+import { fetchUsersRegistry, updateUsersRegistry, createBin, CloudAuthError } from '../services/storageService';
 import { CLOUD_MASTER_KEY } from '../constants';
 import { UserProfile, AppData } from '../types';
+import { triggerHaptic } from '../utils/mobile';
 
 interface AuthScreenProps {
   onLoginSuccess: (user: UserProfile) => void;
 }
 
-type AuthStep = 'initial' | 'enter_name' | 'verify_pin' | 'setup_pin' | 'processing';
+type AuthStep = 'initial' | 'enter_name' | 'verify_pin' | 'setup_pin' | 'processing' | 'cloud_error';
 
 const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
   const [step, setStep] = useState<AuthStep>('initial');
@@ -49,9 +50,24 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
       }
       shuffleKeypad();
     } catch (err: any) {
-      setError(err.message || '로그인 중 오류가 발생했습니다.');
-      setStep('enter_name');
+      if (err instanceof CloudAuthError) {
+        setStep('cloud_error');
+      } else {
+        setError(err.message || '로그인 중 오류가 발생했습니다.');
+        setStep('enter_name');
+      }
     }
+  };
+
+  const handleLocalModeStart = () => {
+    triggerHaptic('medium');
+    const localUser: UserProfile = {
+      id: `local_${Date.now()}`,
+      name: userName.trim() || '로컬 사용자',
+      pin: '000000', // 로컬 모드는 핀 생략 가능하나 구조 유지
+      dataBinId: '' // 클라우드 ID 없음
+    };
+    onLoginSuccess(localUser);
   };
 
   const handlePinComplete = async (finalPin: string) => {
@@ -68,6 +84,7 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
         setPin('');
         setStep('verify_pin');
         shuffleKeypad();
+        triggerHaptic('error');
       }
     } else {
       // 회원가입 시도
@@ -93,17 +110,24 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
         await updateUsersRegistry(CLOUD_MASTER_KEY, registry);
 
         setLoadingMessage('가입이 완료되었습니다! 로그인합니다...');
+        triggerHaptic('success');
         setTimeout(() => onLoginSuccess(newUser), 1000);
       } catch (err: any) {
-        setError(err.message || '가입 처리 중 오류가 발생했습니다.');
-        setPin('');
-        setStep('setup_pin');
+        if (err instanceof CloudAuthError) {
+          setStep('cloud_error');
+        } else {
+          setError(err.message || '가입 처리 중 오류가 발생했습니다.');
+          setPin('');
+          setStep('setup_pin');
+          triggerHaptic('error');
+        }
       }
     }
   };
 
   const handleKeyClick = (key: string) => {
     setError(null);
+    triggerHaptic('light');
     if (key === 'clear') setPin('');
     else if (key === 'del') setPin(prev => prev.slice(0, -1));
     else if (pin.length < 6) {
@@ -131,7 +155,7 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
               클라우드 기반 AI 자산관리 포트폴리오.<br />어디서나 안전하게 관리하세요.
             </p>
             <button 
-              onClick={() => setStep('enter_name')}
+              onClick={() => { setStep('enter_name'); triggerHaptic('medium'); }}
               className="w-full py-5 bg-indigo-600 text-white rounded-[1.5rem] font-black text-lg shadow-2xl shadow-indigo-100 flex items-center justify-center gap-3 active:scale-95 transition-all"
             >
               로그인 / 시작하기
@@ -197,6 +221,36 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
                 ))}
               </div>
             </div>
+          </div>
+        )}
+
+        {step === 'cloud_error' && (
+          <div className="flex-1 flex flex-col items-center justify-center px-10 text-center animate-in fade-in">
+            <div className="w-24 h-24 bg-rose-50 text-rose-500 rounded-[3rem] flex items-center justify-center mb-8 shadow-xl border border-rose-100">
+              <ShieldAlert size={48} className="animate-bounce" />
+            </div>
+            <h3 className="text-2xl font-black text-slate-900 mb-2 tracking-tight">클라우드 연결 불가</h3>
+            <p className="text-sm font-bold text-slate-400 leading-relaxed mb-10">
+              입력하신 마스터 키가 유효하지 않거나<br />인증 권한이 없습니다. 로컬 모드로<br />진행하시겠습니까?
+            </p>
+            
+            <div className="w-full space-y-3">
+              <button 
+                onClick={handleLocalModeStart}
+                className="w-full py-5 bg-indigo-600 text-white rounded-[1.5rem] font-black text-lg shadow-xl active:scale-95 transition-all flex items-center justify-center gap-2"
+              >
+                <Database size={20} /> 로컬 모드로 시작하기
+              </button>
+              <button 
+                onClick={() => setStep('enter_name')}
+                className="w-full py-4 bg-slate-100 text-slate-500 rounded-[1.5rem] font-black text-sm active:scale-95 transition-all"
+              >
+                다시 시도하기
+              </button>
+            </div>
+            <p className="mt-6 text-[10px] text-slate-300 font-bold uppercase tracking-widest leading-relaxed">
+              로컬 모드에서는 동기화가 제한되며<br />브라우저 데이터 삭제 시 유실될 수 있습니다.
+            </p>
           </div>
         )}
 
