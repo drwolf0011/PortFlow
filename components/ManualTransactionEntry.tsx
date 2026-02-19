@@ -19,6 +19,7 @@ const ManualTransactionEntry: React.FC<ManualTransactionEntryProps> = ({ onClose
     date: transaction?.date || new Date().toLocaleDateString('en-CA'),
     type: transaction?.type || TransactionType.BUY,
     assetType: transaction?.assetType || AssetType.STOCK,
+    assetId: transaction?.assetId || '', // FK 필드
     accountId: transaction?.accountId || '',
     managementType: transaction?.managementType || AccountType.GENERAL,
     institution: transaction?.institution || '',
@@ -38,13 +39,17 @@ const ManualTransactionEntry: React.FC<ManualTransactionEntryProps> = ({ onClose
   const myAssetSuggestions = useMemo(() => {
     if (!Array.isArray(assets)) return [];
     if (!searchTerm.trim()) {
-      return [...assets].sort((a, b) => (b.currentPrice * b.quantity) - (a.currentPrice * a.quantity)).slice(0, 5);
+      return [...assets].sort((a, b) => {
+        const valA = (a.currentPrice || 0) * (a.quantity || 0) * (a.currency === 'USD' ? exchangeRate : 1);
+        const valB = (b.currentPrice || 0) * (b.quantity || 0) * (b.currency === 'USD' ? exchangeRate : 1);
+        return valB - valA;
+      }).slice(0, 5);
     }
     return assets.filter(asset => 
       asset.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
       (asset.ticker && asset.ticker.toLowerCase().includes(searchTerm.toLowerCase()))
     ).slice(0, 5);
-  }, [assets, searchTerm]);
+  }, [assets, searchTerm, exchangeRate]);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -75,7 +80,7 @@ const ManualTransactionEntry: React.FC<ManualTransactionEntryProps> = ({ onClose
     
     if (name === 'name') {
       setSearchTerm(value);
-      setFormData(prev => ({ ...prev, name: value }));
+      setFormData(prev => ({ ...prev, name: value, assetId: '' })); // 이름 수정 시 ID 매핑 초기화
       setShowSuggestions(true);
       return;
     }
@@ -114,6 +119,7 @@ const ManualTransactionEntry: React.FC<ManualTransactionEntryProps> = ({ onClose
       price: info.price, 
       currency: info.currency as 'KRW' | 'USD',
       assetType: info.type as AssetType,
+      assetId: '', // 신규 자산이 될 것이므로 ID 없음
       exchangeRate: info.currency === 'USD' ? exchangeRate : 1
     }));
     setSearchTerm(info.name);
@@ -126,6 +132,7 @@ const ManualTransactionEntry: React.FC<ManualTransactionEntryProps> = ({ onClose
     setFormData(prev => ({ 
       ...prev, 
       name: asset.name, 
+      assetId: asset.id, // [FK 로직 핵심] 기존 자산 ID 명시적 할당
       accountId: asset.accountId || '', 
       managementType: asset.managementType || AccountType.GENERAL,
       institution: asset.institution, 
@@ -202,7 +209,6 @@ const ManualTransactionEntry: React.FC<ManualTransactionEntryProps> = ({ onClose
 
             {showSuggestions && (myAssetSuggestions.length > 0 || searchResults.length > 0) && (
               <div className="absolute top-full left-0 right-0 mt-2 bg-white rounded-[2rem] shadow-2xl border border-slate-100 z-[60] overflow-hidden animate-in slide-in-from-top-2 p-1.5 max-h-80 overflow-y-auto no-scrollbar">
-                {/* 내 자산 추천 목록 */}
                 {myAssetSuggestions.length > 0 && (
                   <div className="px-4 py-2 text-[9px] font-black text-slate-400 uppercase tracking-widest bg-slate-50/50 rounded-t-xl mb-1">
                     내 보유 자산
@@ -223,7 +229,6 @@ const ManualTransactionEntry: React.FC<ManualTransactionEntryProps> = ({ onClose
                   </button>
                 ))}
 
-                {/* AI 검색 결과 목록 */}
                 {searchResults.length > 0 && (
                   <div className="px-4 py-2 text-[9px] font-black text-indigo-500 uppercase tracking-widest bg-indigo-50/50 mt-1 flex items-center gap-1 rounded-t-xl">
                     <Sparkles size={10} /> AI 검색 결과

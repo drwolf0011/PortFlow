@@ -72,16 +72,18 @@ export interface UserProfile {
   name: string;
   id: string;
   pin: string;
-  dataBinId: string; // 개인 데이터 저장소 ID
+  dataBinId: string; // Deprecated (kept for compatibility), used as user_id container
   investmentGoal?: string;
   goalPrompt?: string;
   cloudSync?: {
-    apiKey: string;
-    binId: string;
+    supabaseUrl?: string;
+    supabaseKey?: string;
+    apiKey?: string; // Legacy
+    binId?: string; // Legacy
   };
 }
 
-// 중앙 사용자 디렉토리 저장 구조
+// 중앙 사용자 디렉토리 저장 구조 (Supabase에서는 Users 테이블 조회로 대체)
 export interface UsersRegistry {
   users: UserProfile[];
 }
@@ -129,8 +131,10 @@ export interface SavedStrategy {
 }
 
 export interface SyncConfig {
-  apiKey: string;
-  binId: string;
+  supabaseUrl?: string;
+  supabaseKey?: string;
+  apiKey: string; // Legacy
+  binId: string; // Legacy
   lastSynced: string;
   lastSyncedDataTimestamp?: number; 
   autoSync: boolean;

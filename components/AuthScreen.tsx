@@ -5,9 +5,9 @@ import {
   AlertCircle, Grid3X3, ArrowRight, UserCircle, Edit3, 
   Loader2, UserPlus, LogIn, Sparkles, Database, ShieldAlert
 } from 'lucide-react';
-import { fetchUsersRegistry, updateUsersRegistry, createBin, CloudAuthError } from '../services/storageService';
-import { CLOUD_MASTER_KEY } from '../constants';
-import { UserProfile, AppData } from '../types';
+import { fetchUsersRegistry, registerUser, CloudAuthError } from '../services/storageService';
+import { SUPABASE_URL, SUPABASE_KEY } from '../constants';
+import { UserProfile, AppData, SyncConfig } from '../types';
 import { triggerHaptic } from '../utils/mobile';
 
 interface AuthScreenProps {
@@ -24,6 +24,30 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
   const [shuffledKeys, setShuffledKeys] = useState<string[]>([]);
   const [targetUser, setTargetUser] = useState<UserProfile | null>(null);
   const [loadingMessage, setLoadingMessage] = useState('');
+  
+  // Local Config for Supabase
+  const [localConfig, setLocalConfig] = useState<{url: string, key: string} | null>(null);
+
+  useEffect(() => {
+      // Check for locally stored config
+      try {
+          const stored = localStorage.getItem('portflow_sync_config');
+          if (stored) {
+              const parsed: SyncConfig = JSON.parse(stored);
+              if (parsed.supabaseUrl && parsed.supabaseKey) {
+                  setLocalConfig({ url: parsed.supabaseUrl, key: parsed.supabaseKey });
+              }
+          }
+      } catch (e) {
+          console.error(e);
+      }
+  }, []);
+
+  const getEffectiveCredentials = () => {
+      const url = SUPABASE_URL || localConfig?.url;
+      const key = SUPABASE_KEY || localConfig?.key;
+      return { url, key };
+  };
 
   const shuffleKeypad = useCallback(() => {
     const nums = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0', 'clear', 'del'];
@@ -34,8 +58,10 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
     if (e) e.preventDefault();
     if (!userName.trim()) return;
 
-    // CLOUD_MASTER_KEY가 없으면 즉시 로컬 모드 설정으로 진입
-    if (!CLOUD_MASTER_KEY) {
+    const { url, key } = getEffectiveCredentials();
+
+    // 연결 정보가 없으면 로컬 모드로 진행
+    if (!url || !key) {
       setStep('setup_pin');
       shuffleKeypad();
       return;
@@ -46,7 +72,7 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
     setError(null);
 
     try {
-      const registry = await fetchUsersRegistry(CLOUD_MASTER_KEY);
+      const registry = await fetchUsersRegistry(url, key);
       const user = registry.users.find(u => u.name === userName.trim());
 
       if (user) {
@@ -60,6 +86,8 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
       if (err instanceof CloudAuthError) {
         setStep('cloud_error');
       } else {
+        // Fallback to local setup if connection fails but show toast/alert in real app? 
+        // For now, allow local setup or retry
         setError(err.message || '로그인 중 오류가 발생했습니다.');
         setStep('enter_name');
       }
@@ -71,17 +99,18 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
     const localUser: UserProfile = {
       id: `local_${Date.now()}`,
       name: userName.trim() || '로컬 사용자',
-      pin: '000000', // 로컬 모드는 핀 생략 가능하나 구조 유지
-      dataBinId: '' // 클라우드 ID 없음
+      pin: '000000', 
+      dataBinId: '' 
     };
     onLoginSuccess(localUser);
   };
 
   const handlePinComplete = async (finalPin: string) => {
     setStep('processing');
+    const { url, key } = getEffectiveCredentials();
     
-    // 로컬 모드 (마스터 키 없음) 처리
-    if (!CLOUD_MASTER_KEY && !targetUser) {
+    // 로컬 모드 처리
+    if ((!url || !key) && !targetUser) {
       setLoadingMessage('로컬 프로필을 생성합니다...');
       setTimeout(() => {
         const localUser: UserProfile = {
@@ -100,6 +129,8 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
       setLoadingMessage('비밀번호를 확인하고 있습니다...');
       if (targetUser.pin === finalPin) {
         setLoadingMessage('클라우드 데이터를 동기화합니다...');
+        // Ensure credentials are passed to App
+        targetUser.cloudSync = { supabaseUrl: url, supabaseKey: key };
         setTimeout(() => onLoginSuccess(targetUser), 800);
       } else {
         setError('비밀번호가 일치하지 않습니다.');
@@ -112,37 +143,26 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
       // 회원가입 시도
       setLoadingMessage('새로운 클라우드 계정을 생성하고 있습니다...');
       try {
-        // 1. 개인 데이터 Bin 생성
-        const initialData: AppData = {
-          assets: [], transactions: [], accounts: [], user: null,
-          history: [], lastUpdated: '-', exchangeRate: 1350, timestamp: Date.now()
-        };
-        const newDataBinId = await createBin(CLOUD_MASTER_KEY, initialData);
+        if (!url || !key) throw new Error("Cloud config missing");
 
-        // 2. 중앙 디렉토리에 유저 등록
         const newUser: UserProfile = {
           id: `user_${Date.now()}`,
           name: userName.trim(),
           pin: finalPin,
-          dataBinId: newDataBinId
+          dataBinId: '', // Legacy placeholder
+          cloudSync: { supabaseUrl: url, supabaseKey: key }
         };
 
-        const registry = await fetchUsersRegistry(CLOUD_MASTER_KEY);
-        registry.users.push(newUser);
-        await updateUsersRegistry(CLOUD_MASTER_KEY, registry);
+        await registerUser(url, key, newUser);
 
         setLoadingMessage('가입이 완료되었습니다! 로그인합니다...');
         triggerHaptic('success');
         setTimeout(() => onLoginSuccess(newUser), 1000);
       } catch (err: any) {
-        if (err instanceof CloudAuthError) {
-          setStep('cloud_error');
-        } else {
-          setError(err.message || '가입 처리 중 오류가 발생했습니다.');
-          setPin('');
-          setStep('setup_pin');
-          triggerHaptic('error');
-        }
+        setError(err.message || '가입 처리 중 오류가 발생했습니다.');
+        setPin('');
+        setStep('setup_pin');
+        triggerHaptic('error');
       }
     }
   };
@@ -174,7 +194,7 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
               <span className="text-indigo-600">하나의 흐름으로</span>
             </h1>
             <p className="text-slate-400 font-bold text-sm leading-relaxed mb-12">
-              클라우드 기반 AI 자산관리 포트폴리오.<br />어디서나 안전하게 관리하세요.
+              Supabase 기반 AI 자산관리 포트폴리오.<br />안전하고 확장 가능한 데이터베이스.
             </p>
             <button 
               onClick={() => { setStep('enter_name'); triggerHaptic('medium'); }}
@@ -183,6 +203,11 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
               로그인 / 시작하기
               <ArrowRight size={20} />
             </button>
+            {!getEffectiveCredentials().url && (
+               <p className="text-center text-[10px] text-slate-300 font-bold mt-4 uppercase tracking-widest">
+                 현재 로컬 모드로 시작됩니다 (DB 미설정)
+               </p>
+            )}
           </div>
         )}
 
@@ -253,7 +278,7 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
             </div>
             <h3 className="text-2xl font-black text-slate-900 mb-2 tracking-tight">클라우드 연결 불가</h3>
             <p className="text-sm font-bold text-slate-400 leading-relaxed mb-10">
-              입력하신 마스터 키가 유효하지 않거나<br />인증 권한이 없습니다. 로컬 모드로<br />진행하시겠습니까?
+              Supabase 연결에 실패했습니다.<br />권한이 없거나 네트워크 문제입니다.<br />로컬 모드로 진행하시겠습니까?
             </p>
             
             <div className="w-full space-y-3">
@@ -270,9 +295,6 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
                 다시 시도하기
               </button>
             </div>
-            <p className="mt-6 text-[10px] text-slate-300 font-bold uppercase tracking-widest leading-relaxed">
-              로컬 모드에서는 동기화가 제한되며<br />브라우저 데이터 삭제 시 유실될 수 있습니다.
-            </p>
           </div>
         )}
 
