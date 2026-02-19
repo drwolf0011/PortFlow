@@ -71,7 +71,7 @@ const AppContent: React.FC = () => {
       return saved ? JSON.parse(saved) : [];
     } catch (e) { return []; }
   });
-  const [history, setHistory] = useState<{date: string, value: number}[]>(() => {
+  const [history, setHistory] = useState<{date: string, value: number, exchangeRate?: number}[]>(() => {
     try {
       const saved = localStorage.getItem('portflow_history');
       return saved ? JSON.parse(saved) : [];
@@ -83,11 +83,28 @@ const AppContent: React.FC = () => {
       return saved ? JSON.parse(saved) : null;
     } catch (e) { return null; }
   });
+
   const [dynamicExchangeRate, setDynamicExchangeRate] = useState<number>(() => {
+    try {
+      const historySaved = localStorage.getItem('portflow_history');
+      if (historySaved) {
+        const hist = JSON.parse(historySaved);
+        if (Array.isArray(hist) && hist.length > 0) {
+          const lastEntry = hist[hist.length - 1];
+          if (lastEntry.exchangeRate) return lastEntry.exchangeRate;
+        }
+      }
+    } catch (e) {}
     const saved = localStorage.getItem('portflow_exchange_rate');
     return saved ? parseFloat(saved) : DEFAULT_EXCHANGE_RATE;
   });
+
   const [lastUpdated, setLastUpdated] = useState<string>(() => localStorage.getItem('portflow_last_updated') || '-');
+  
+  const [lastSyncTimestamp, setLastSyncTimestamp] = useState<number>(() => {
+    return Number(localStorage.getItem('portflow_last_sync_timestamp')) || 0;
+  });
+
   const [savedStrategies, setSavedStrategies] = useState<SavedStrategy[]>(() => {
     try {
       const saved = localStorage.getItem('portflow_saved_strategies');
@@ -159,7 +176,7 @@ const AppContent: React.FC = () => {
     savedStrategies
   }), [assets, transactions, accounts, user, history, lastUpdated, dynamicExchangeRate, localUpdateTimestamp, savedStrategies]);
 
-  const handleSync = useCallback(async (mode: 'AUTO' | 'FORCE_PUSH' | 'FORCE_PULL' | 'SMART' = 'SMART') => {
+  const handleSync = useCallback(async (mode: 'AUTO' | 'FORCE_PUSH' | 'FORCE_PULL' | 'SMART' = 'SMART', overrideData?: AppData) => {
     if (isSyncingRef.current) return;
     const url = syncConfig.supabaseUrl;
     const key = syncConfig.supabaseKey;
@@ -174,7 +191,8 @@ const AppContent: React.FC = () => {
     setIsSyncing(true);
     
     try {
-      const localData = getCurrentAppData();
+      // overrideData가 있으면 해당 데이터를, 없으면 현재 상태의 데이터를 사용
+      const localData = overrideData || getCurrentAppData();
 
       if (mode === 'FORCE_PUSH' || mode === 'AUTO') {
         await saveUserData(url, key, localData);
@@ -249,8 +267,6 @@ const AppContent: React.FC = () => {
 
   const recalculateAssets = useCallback((txs: Transaction[], currentAssets: Asset[]) => {
     const groups: Record<string, Transaction[]> = {};
-    
-    // [FK 로직 핵심] 거래 데이터를 그룹화 (assetId 우선, 없으면 레거시 조합 키 사용)
     txs.forEach(t => {
       const key = t.assetId || `${t.name}|${t.institution}|${t.accountId || 'none'}`;
       if (!groups[key]) groups[key] = [];
@@ -259,9 +275,7 @@ const AppContent: React.FC = () => {
 
     const assetMetaMap: Record<string, Asset> = {};
     currentAssets.forEach(a => {
-      // ID 기반 매핑을 위해 맵 생성
       assetMetaMap[a.id] = a;
-      // 레거시 지원용 맵핑 (종합키)
       assetMetaMap[`${a.name}|${a.institution}|${a.accountId || 'none'}`] = a;
     });
 
@@ -292,7 +306,6 @@ const AppContent: React.FC = () => {
 
       if (totalQty > 0) {
         newAssets.push({
-          // 기존 자산의 ID를 유지하거나 키 자체가 ID인 경우 사용
           id: meta?.id || (key.length > 20 ? key : Math.random().toString(36).substr(2, 9)),
           name: meta?.name || firstTx.name, 
           institution: meta?.institution || firstTx.institution, 
@@ -329,7 +342,6 @@ const AppContent: React.FC = () => {
   }, [recalculateAssets]);
 
   const handleSaveTransaction = (tx: Transaction) => {
-    // [FK 로직 자동 매핑] 저장하려는 거래 내역에 assetId가 없는 경우, 기존 자산에서 찾아 매핑 시도
     if (!tx.assetId) {
       const existingAsset = assets.find(a => 
         a.name === tx.name && 
@@ -381,6 +393,15 @@ const AppContent: React.FC = () => {
 
   const handleUpdatePrices = useCallback(async () => {
     if (assets.length === 0) return showToast("갱신할 자산이 없습니다.");
+    
+    const now = Date.now();
+    const COOLDOWN_TIME = 10 * 60 * 1000;
+    if (now - lastSyncTimestamp < COOLDOWN_TIME) {
+      const remainingMinutes = Math.ceil((COOLDOWN_TIME - (now - lastSyncTimestamp)) / 60000);
+      showToast(`동기화 쿨다운 중입니다. ${remainingMinutes}분 후 다시 시도하세요.`);
+      return;
+    }
+
     setIsUpdatingPrices(true);
     try {
       let updatedAssets = assets, newRate = dynamicExchangeRate, successMsg = "시세가 갱신되었습니다.";
@@ -402,10 +423,49 @@ const AppContent: React.FC = () => {
         if (result.exchangeRate) newRate = result.exchangeRate;
         successMsg = "AI 시세 추정 완료";
       }
-      setAssets(updatedAssets); setDynamicExchangeRate(newRate); setLastUpdated(new Date().toLocaleString());
+      
+      const newLastUpdated = new Date().toLocaleString();
+      const totalValue = updatedAssets.reduce((acc, a) => {
+        const mult = a.currency === 'USD' ? newRate : 1;
+        return acc + (a.currentPrice * a.quantity * mult);
+      }, 0);
+      
+      const today = new Date().toLocaleDateString('en-CA');
+      let newHistory = [...history];
+      const filteredHistory = newHistory.filter(h => h.date !== today);
+      newHistory = [...filteredHistory, { date: today, value: totalValue, exchangeRate: newRate }];
+
+      // 상태 업데이트
+      setAssets(updatedAssets); 
+      setDynamicExchangeRate(newRate); 
+      setLastUpdated(newLastUpdated);
+      setHistory(newHistory);
+      setLastSyncTimestamp(now);
+      localStorage.setItem('portflow_last_sync_timestamp', now.toString());
+
+      // [즉시 DB 동기화] 상태가 즉시 반영되지 않으므로 최신 데이터를 수동으로 구성하여 전달
+      const latestAppData: AppData = {
+        assets: updatedAssets,
+        transactions,
+        accounts,
+        user,
+        history: newHistory,
+        lastUpdated: newLastUpdated,
+        exchangeRate: newRate,
+        timestamp: now, // 현재 시각으로 타임스탬프 갱신
+        savedStrategies
+      };
+      
+      // 비동기 큐 대기 없이 즉시 강제 푸시
+      handleSync('FORCE_PUSH', latestAppData);
+
       showToast(successMsg);
-    } catch (e: any) { showToast(`오류: ${e.message}`); } finally { setIsUpdatingPrices(false); }
-  }, [assets, kisConfig, dynamicExchangeRate, showToast]);
+    } catch (e: any) { 
+      showToast(`오류: ${e.message}`); 
+    } finally { 
+      setIsUpdatingPrices(false); 
+    }
+  }, [assets, kisConfig, dynamicExchangeRate, lastSyncTimestamp, transactions, accounts, user, history, savedStrategies, handleSync, showToast]);
 
   const handleEnrichData = useCallback(async () => {
       if (isEnriching) return;

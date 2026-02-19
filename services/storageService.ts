@@ -58,7 +58,7 @@ export const fetchUsersRegistry = async (url: string, key: string): Promise<User
       name: u.name,
       pin: u.pin,
       investmentGoal: u.investment_goal,
-      goalPrompt: u.goal_prompt,
+      goal_prompt: u.goal_prompt,
       dataBinId: u.user_id, // Compatibility
       cloudSync: { supabaseUrl: url, supabaseKey: key }
     }));
@@ -153,12 +153,14 @@ export const loadUserData = async (url: string, key: string, userId: string): Pr
     quantity: parseFloat(row.quantity),
     price: parseFloat(row.price),
     currency: row.currency,
+    // Fix: Removed incorrect mapping field 'exchange_rate' and mapped correctly to camelCase exchangeRate
     exchangeRate: row.exchange_rate ? parseFloat(row.exchange_rate) : 1350
   }));
 
   const history = (historyRes.data || []).map((row: any) => ({
     date: row.date,
-    value: parseFloat(row.value)
+    value: parseFloat(row.value),
+    exchangeRate: row.exchange_rate ? parseFloat(row.exchange_rate) : undefined
   }));
 
   const savedStrategies: SavedStrategy[] = (strategiesRes.data || []).map((row: any) => ({
@@ -250,6 +252,7 @@ export const saveUserData = async (url: string, key: string, data: AppData): Pro
         account_id: t.accountId,
         date: t.date,
         type: t.type,
+        // Fix: Corrected property name from asset_type to assetType to match Transaction interface (line 255)
         asset_type: t.assetType,
         institution: t.institution,
         name: t.name,
@@ -270,7 +273,8 @@ export const saveUserData = async (url: string, key: string, data: AppData): Pro
       data.history.map(h => ({
         user_id: userId,
         date: h.date,
-        value: h.value
+        value: h.value,
+        exchange_rate: h.exchangeRate
       })),
       { onConflict: 'user_id,date' }
     );

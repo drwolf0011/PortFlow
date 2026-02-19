@@ -66,6 +66,7 @@ export interface Asset {
 export interface PerformancePoint {
   date: string;
   value: number;
+  exchangeRate?: number;
 }
 
 export interface UserProfile {
@@ -153,7 +154,7 @@ export interface AppData {
   transactions: Transaction[];
   accounts: Account[];
   user: UserProfile | null;
-  history: {date: string, value: number}[];
+  history: {date: string, value: number, exchangeRate?: number}[];
   lastUpdated: string;
   exchangeRate: number;
   timestamp: number;
