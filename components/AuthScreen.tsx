@@ -34,6 +34,13 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
     if (e) e.preventDefault();
     if (!userName.trim()) return;
 
+    // CLOUD_MASTER_KEY가 없으면 즉시 로컬 모드 설정으로 진입
+    if (!CLOUD_MASTER_KEY) {
+      setStep('setup_pin');
+      shuffleKeypad();
+      return;
+    }
+
     setStep('processing');
     setLoadingMessage('사용자 정보를 확인하고 있습니다...');
     setError(null);
@@ -72,6 +79,21 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
 
   const handlePinComplete = async (finalPin: string) => {
     setStep('processing');
+    
+    // 로컬 모드 (마스터 키 없음) 처리
+    if (!CLOUD_MASTER_KEY && !targetUser) {
+      setLoadingMessage('로컬 프로필을 생성합니다...');
+      setTimeout(() => {
+        const localUser: UserProfile = {
+          id: `local_${Date.now()}`,
+          name: userName.trim(),
+          pin: finalPin,
+          dataBinId: ''
+        };
+        onLoginSuccess(localUser);
+      }, 500);
+      return;
+    }
     
     if (targetUser) {
       // 로그인 시도
