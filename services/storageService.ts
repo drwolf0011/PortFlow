@@ -58,7 +58,7 @@ export const fetchUsersRegistry = async (url: string, key: string): Promise<User
       name: u.name,
       pin: u.pin,
       investmentGoal: u.investment_goal,
-      goal_prompt: u.goal_prompt,
+      goalPrompt: u.goal_prompt,
       dataBinId: u.user_id, // Compatibility
       cloudSync: { supabaseUrl: url, supabaseKey: key }
     }));
@@ -153,7 +153,6 @@ export const loadUserData = async (url: string, key: string, userId: string): Pr
     quantity: parseFloat(row.quantity),
     price: parseFloat(row.price),
     currency: row.currency,
-    // Fix: Removed incorrect mapping field 'exchange_rate' and mapped correctly to camelCase exchangeRate
     exchangeRate: row.exchange_rate ? parseFloat(row.exchange_rate) : 1350
   }));
 
@@ -171,6 +170,19 @@ export const loadUserData = async (url: string, key: string, userId: string): Pr
     strategy: row.strategy
   }));
 
+  // Find the most recent exchange rate from history records to avoid 1350 hardcoding
+  let restoredExchangeRate = 1350;
+  if (history.length > 0) {
+    const sortedHistory = [...history].sort((a, b) => b.date.localeCompare(a.date));
+    if (sortedHistory[0].exchangeRate) {
+      restoredExchangeRate = sortedHistory[0].exchangeRate;
+    }
+  }
+
+  // Use the database's updated_at as the official lastUpdated string
+  const dbUpdatedTime = userRes.data.updated_at;
+  const lastUpdatedStr = dbUpdatedTime ? new Date(dbUpdatedTime).toLocaleString() : new Date().toLocaleString();
+
   return {
     user,
     accounts,
@@ -178,9 +190,9 @@ export const loadUserData = async (url: string, key: string, userId: string): Pr
     transactions,
     history,
     savedStrategies,
-    lastUpdated: new Date().toLocaleString(),
-    exchangeRate: 1350, // Default fallback, updated by app logic
-    timestamp: Date.now()
+    lastUpdated: lastUpdatedStr,
+    exchangeRate: restoredExchangeRate,
+    timestamp: dbUpdatedTime ? new Date(dbUpdatedTime).getTime() : Date.now()
   };
 };
 
@@ -190,6 +202,8 @@ export const saveUserData = async (url: string, key: string, data: AppData): Pro
   const userId = data.user?.id;
   if (!userId) throw new Error("User ID missing");
 
+  const syncTimestamp = new Date().toISOString();
+
   // 1. Upsert User
   const { error: userError } = await supabase.from('users').upsert({
     user_id: userId,
@@ -197,12 +211,14 @@ export const saveUserData = async (url: string, key: string, data: AppData): Pro
     pin: data.user?.pin,
     investment_goal: data.user?.investmentGoal,
     goal_prompt: data.user?.goalPrompt,
-    updated_at: new Date().toISOString()
+    updated_at: syncTimestamp
   });
   if (userError) throw new Error(`User Save Error: ${userError.message}`);
 
-  // 2. Upsert Accounts
-  if (data.accounts.length > 0) {
+  // 2. Sync Accounts (Delete missing, Upsert existing)
+  const incomingAccountIds = data.accounts.map(a => a.id);
+  if (incomingAccountIds.length > 0) {
+    await supabase.from('accounts').delete().eq('user_id', userId).not('id', 'in', `(${incomingAccountIds.join(',')})`);
     const { error } = await supabase.from('accounts').upsert(
       data.accounts.map(a => ({
         id: a.id,
@@ -212,14 +228,18 @@ export const saveUserData = async (url: string, key: string, data: AppData): Pro
         nickname: a.nickname,
         type: a.type,
         is_hidden: a.isHidden,
-        updated_at: new Date().toISOString()
+        updated_at: syncTimestamp
       }))
     );
     if (error) console.error("Accounts Save Error", error);
+  } else {
+    await supabase.from('accounts').delete().eq('user_id', userId);
   }
 
-  // 3. Upsert Assets
-  if (data.assets.length > 0) {
+  // 3. Sync Assets (Delete missing, Upsert existing)
+  const incomingAssetIds = data.assets.map(a => a.id);
+  if (incomingAssetIds.length > 0) {
+    await supabase.from('assets').delete().eq('user_id', userId).not('id', 'in', `(${incomingAssetIds.join(',')})`);
     const { error } = await supabase.from('assets').upsert(
       data.assets.map(a => ({
         id: a.id,
@@ -236,14 +256,18 @@ export const saveUserData = async (url: string, key: string, data: AppData): Pro
         current_price: a.currentPrice,
         currency: a.currency,
         management_type: a.managementType,
-        updated_at: new Date().toISOString()
+        updated_at: syncTimestamp
       }))
     );
     if (error) console.error("Assets Save Error", error);
+  } else {
+    await supabase.from('assets').delete().eq('user_id', userId);
   }
 
-  // 4. Upsert Transactions
-  if (data.transactions.length > 0) {
+  // 4. Sync Transactions (Delete missing, Upsert existing)
+  const incomingTxIds = data.transactions.map(t => t.id);
+  if (incomingTxIds.length > 0) {
+    await supabase.from('transactions').delete().eq('user_id', userId).not('id', 'in', `(${incomingTxIds.join(',')})`);
     const { error } = await supabase.from('transactions').upsert(
       data.transactions.map(t => ({
         id: t.id,
@@ -252,7 +276,6 @@ export const saveUserData = async (url: string, key: string, data: AppData): Pro
         account_id: t.accountId,
         date: t.date,
         type: t.type,
-        // Fix: Corrected property name from asset_type to assetType to match Transaction interface (line 255)
         asset_type: t.assetType,
         institution: t.institution,
         name: t.name,
@@ -260,31 +283,35 @@ export const saveUserData = async (url: string, key: string, data: AppData): Pro
         price: t.price,
         currency: t.currency,
         exchange_rate: t.exchangeRate,
-        updated_at: new Date().toISOString()
+        updated_at: syncTimestamp
       }))
     );
     if (error) console.error("Transactions Save Error", error);
+  } else {
+    await supabase.from('transactions').delete().eq('user_id', userId);
   }
 
   // 5. Upsert History
   if (data.history.length > 0) {
-    // History needs conflict resolution on (user_id, date)
     const { error } = await supabase.from('portfolio_history').upsert(
       data.history.map(h => ({
         user_id: userId,
         date: h.date,
         value: h.value,
-        exchange_rate: h.exchangeRate
+        exchange_rate: h.exchangeRate,
+        updated_at: syncTimestamp // Record the precise time of this data point update
       })),
       { onConflict: 'user_id,date' }
     );
     if (error) console.error("History Save Error", error);
   }
 
-  // 6. Upsert Strategies
-  if (data.savedStrategies && data.savedStrategies.length > 0) {
+  // 6. Sync Strategies
+  const incomingStrategyIds = (data.savedStrategies || []).map(s => s.id);
+  if (incomingStrategyIds.length > 0) {
+    await supabase.from('saved_strategies').delete().eq('user_id', userId).not('id', 'in', `(${incomingStrategyIds.join(',')})`);
     const { error } = await supabase.from('saved_strategies').upsert(
-      data.savedStrategies.map(s => ({
+      data.savedStrategies!.map(s => ({
         id: s.id,
         user_id: userId,
         name: s.name,
@@ -294,5 +321,7 @@ export const saveUserData = async (url: string, key: string, data: AppData): Pro
       }))
     );
     if (error) console.error("Strategies Save Error", error);
+  } else {
+    await supabase.from('saved_strategies').delete().eq('user_id', userId);
   }
 };

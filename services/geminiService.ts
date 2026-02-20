@@ -14,6 +14,7 @@ export interface StockInfo {
 export interface PriceUpdateResult {
   updatedAssets: Asset[];
   exchangeRate?: number;
+  fetchedCount: number; // 실제 API 조회를 요청한 고유 종목 수
 }
 
 interface CachedPrice {
@@ -21,7 +22,7 @@ interface CachedPrice {
   timestamp: number;
 }
 const PRICE_CACHE = new Map<string, CachedPrice>();
-const CACHE_TTL = 60 * 60 * 1000; 
+const CACHE_TTL = 30 * 60 * 1000; // 30분 캐시
 
 const safeJsonParse = (text: string) => {
   if (!text) return null;
@@ -117,8 +118,6 @@ async function generateContentWithRetry(params: any, useQueue = true): Promise<G
       } catch (error: any) {
         lastError = error;
         const status = error.status || error.code || 0;
-        
-        // 429, 500, 503, xhr error 시 재시도
         if (status === 429 || status === 500 || status === 503 || error.message?.includes('xhr') || error.message?.includes('quota')) {
           const waitTime = (5000 * Math.pow(2.2, i)) + (Math.random() * 2000);
           console.warn(`[Gemini API] Request failed (${status}). Retrying in ${Math.round(waitTime/1000)}s...`);
@@ -148,42 +147,57 @@ export const getMarketBriefing = async (): Promise<string> => {
   }
 };
 
+/**
+ * 효율적인 시세 조회를 위해 중복을 제거하고 Ticker 우선 조회를 수행합니다.
+ */
 export const updateAssetPrices = async (assets: Asset[]): Promise<PriceUpdateResult> => {
   const now = Date.now();
   const allUpdatedPrices: Record<string, number> = {};
   let latestExchangeRate: number | undefined;
   
-  const uniqueItemsMap = new Map<string, { name: string; ticker?: string; currency: string }>();
+  // Unique Query Map: Ticker가 있으면 Ticker를, 없으면 Name을 키로 사용
+  const uniqueItemsMap = new Map<string, { ticker?: string; name: string; currency: string }>();
   
   assets.forEach(asset => {
     if (asset.type === AssetType.CASH) return;
-    const key = `${asset.ticker || asset.name}_${asset.currency}`;
-    const cached = PRICE_CACHE.get(key);
     
+    // Ticker가 있으면 Ticker가 메인 키, 없으면 Name이 메인 키
+    const queryKey = asset.ticker ? asset.ticker : asset.name;
+    const mapKey = `${queryKey}_${asset.currency}`;
+    
+    const cached = PRICE_CACHE.get(mapKey);
     if (cached && (now - cached.timestamp < CACHE_TTL)) {
-      allUpdatedPrices[key] = cached.price;
-    } else if (!uniqueItemsMap.has(key)) {
-      uniqueItemsMap.set(key, { name: asset.name, ticker: asset.ticker, currency: asset.currency });
+      allUpdatedPrices[mapKey] = cached.price;
+    } else if (!uniqueItemsMap.has(mapKey)) {
+      uniqueItemsMap.set(mapKey, { 
+        ticker: asset.ticker, 
+        name: asset.name, 
+        currency: asset.currency 
+      });
     }
   });
 
   const needUpdate = Array.from(uniqueItemsMap.entries());
+  let totalFetchedItems = 0;
+
   if (needUpdate.length > 0) {
-    // 배치 크기를 8개로 축소하여 500 에러 및 타임아웃 방지
+    totalFetchedItems = needUpdate.length;
     const itemChunks = [];
     for (let i = 0; i < needUpdate.length; i += 8) {
       itemChunks.push(needUpdate.slice(i, i + 8));
     }
 
     for (const chunk of itemChunks) {
-      const chunkData = chunk.map(([key, info]) => ({ 
-        key, 
-        name: info.name, 
+      const chunkData = chunk.map(([mapKey, info]) => ({ 
+        mapKey, 
         ticker: info.ticker, 
+        name: info.name, 
         currency: info.currency 
       }));
       
-      const prompt = `Investigate the latest market prices for these assets and provide the current USD/KRW exchange rate: ${JSON.stringify(chunkData)}. Return results as JSON with "prices" array containing {key, price} and an "exchangeRate" number.`;
+      const prompt = `Investigate the latest market prices for these assets and provide the current USD/KRW exchange rate. Use ticker symbols for search if provided, otherwise use names.
+      Input: ${JSON.stringify(chunkData)}
+      Return results as JSON with "prices" array containing {mapKey, price} and an "exchangeRate" number.`;
       
       try {
         const response = await generateContentWithRetry({
@@ -200,10 +214,10 @@ export const updateAssetPrices = async (assets: Asset[]): Promise<PriceUpdateRes
                   items: { 
                     type: Type.OBJECT, 
                     properties: { 
-                      key: { type: Type.STRING }, 
+                      mapKey: { type: Type.STRING }, 
                       price: { type: Type.NUMBER } 
                     }, 
-                    required: ["key", "price"] 
+                    required: ["mapKey", "price"] 
                   } 
                 },
                 exchangeRate: { type: Type.NUMBER }
@@ -216,8 +230,8 @@ export const updateAssetPrices = async (assets: Asset[]): Promise<PriceUpdateRes
         const parsed = safeJsonParse(response.text);
         if (parsed?.prices) {
           parsed.prices.forEach((p: any) => {
-            allUpdatedPrices[p.key] = p.price;
-            PRICE_CACHE.set(p.key, { price: p.price, timestamp: now });
+            allUpdatedPrices[p.mapKey] = p.price;
+            PRICE_CACHE.set(p.mapKey, { price: p.price, timestamp: now });
           });
         }
         if (parsed?.exchangeRate) {
@@ -229,14 +243,26 @@ export const updateAssetPrices = async (assets: Asset[]): Promise<PriceUpdateRes
     }
   }
 
+  // 매핑 로직: Ticker로 먼저 찾고, 없으면 Name으로 찾음 (User의 요청사항 반영)
   const updatedAssets = assets.map(asset => {
     if (asset.type === AssetType.CASH) return asset;
-    const key = `${asset.ticker || asset.name}_${asset.currency}`;
-    const newPrice = allUpdatedPrices[key];
-    return newPrice ? { ...asset, currentPrice: newPrice } : asset;
+    
+    let foundPrice: number | undefined;
+    
+    // 1순위: Ticker 기반 매칭
+    if (asset.ticker) {
+      foundPrice = allUpdatedPrices[`${asset.ticker}_${asset.currency}`];
+    }
+    
+    // 2순위: Ticker 결과가 없거나 Ticker가 원래 없는 경우 Name 기반 매칭
+    if (foundPrice === undefined) {
+      foundPrice = allUpdatedPrices[`${asset.name}_${asset.currency}`];
+    }
+    
+    return foundPrice !== undefined ? { ...asset, currentPrice: foundPrice } : asset;
   });
 
-  return { updatedAssets, exchangeRate: latestExchangeRate };
+  return { updatedAssets, exchangeRate: latestExchangeRate, fetchedCount: totalFetchedItems };
 };
 
 export const generateGoalPrompt = async (answers: any): Promise<{ goal: string, prompt: string }> => {
@@ -502,7 +528,6 @@ export const searchStockList = async (query: string): Promise<StockInfo[]> => {
     });
     const results = (safeJsonParse(response.text) || []) as any[];
     return results.map(item => {
-      // Normalize type from AI
       let normalizedType = AssetType.STOCK; 
       const t = item.type ? item.type.toUpperCase() : '';
       if (t.includes('ETF')) normalizedType = AssetType.ETF;
@@ -556,7 +581,6 @@ export const enrichAssetData = async (
   assets: Asset[],
   onProgress?: (processedCount: number, totalCount: number, updatedChunk: Asset[]) => Promise<void>
 ): Promise<Asset[]> => {
-  // Filter assets that need enrichment (missing ticker)
   const targets = assets.filter(a => 
     !a.ticker || a.ticker.trim() === '' || 
     (a.currency === 'USD' && (!a.exchange || a.exchange.trim() === ''))
@@ -567,7 +591,6 @@ export const enrichAssetData = async (
   const totalTargets = targets.length;
   let processedCount = 0;
   
-  // Chunking to avoid large payload/token limit (Reduced to 5 for better feedback/saving)
   const chunkSize = 5;
   for (let i = 0; i < totalTargets; i += chunkSize) {
     const chunk = targets.slice(i, i + chunkSize);
