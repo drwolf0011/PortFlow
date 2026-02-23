@@ -45,6 +45,8 @@ export interface Transaction {
   price: number;
   currency: 'KRW' | 'USD';
   exchangeRate: number;
+  ticker?: string;
+  exchange?: string;
 }
 
 export interface Asset {

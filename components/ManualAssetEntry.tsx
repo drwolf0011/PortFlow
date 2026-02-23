@@ -224,7 +224,7 @@ const ManualAssetEntry: React.FC<ManualAssetEntryProps> = ({ onClose, onSave, as
               />
             </div>
             <div className="space-y-1.5">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">거래소(KIS용)</label>
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1 flex items-center h-[15px]">거래소(KIS용)</label>
               <select name="exchange" value={formData.exchange} onChange={handleChange} className="w-full px-4 py-4 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold appearance-none outline-none focus:border-indigo-500 focus:bg-white transition-all">
                 <option value="">자동/미지정</option>
                 <option value="KRX">한국거래소 (KRX)</option>

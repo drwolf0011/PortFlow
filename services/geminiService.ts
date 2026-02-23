@@ -503,7 +503,7 @@ export const getAIStrategy = async (
 };
 
 export const searchStockList = async (query: string): Promise<StockInfo[]> => {
-  const prompt = `Search for 5 investment assets related to "${query}" and return info as JSON.`;
+  const prompt = `Search for 5 investment assets related to "${query}" and return info as JSON. Include the market/exchange name (e.g., NASDAQ, NYSE, KRX).`;
   try {
     const response = await generateContentWithRetry({
       model: 'gemini-3-flash-preview',
@@ -520,7 +520,8 @@ export const searchStockList = async (query: string): Promise<StockInfo[]> => {
               ticker: { type: Type.STRING }, 
               price: { type: Type.NUMBER }, 
               currency: { type: Type.STRING }, 
-              type: { type: Type.STRING } 
+              type: { type: Type.STRING },
+              market: { type: Type.STRING }
             } 
           } 
         }

@@ -27,7 +27,9 @@ const ManualTransactionEntry: React.FC<ManualTransactionEntryProps> = ({ onClose
     quantity: transaction?.quantity || 0,
     price: transaction?.price || 0,
     currency: transaction?.currency || 'KRW',
-    exchangeRate: transaction?.exchangeRate || exchangeRate
+    exchangeRate: transaction?.exchangeRate || exchangeRate,
+    ticker: transaction?.ticker || '',
+    exchange: transaction?.exchange || ''
   });
 
   const [searchTerm, setSearchTerm] = useState(transaction?.name || '');
@@ -120,7 +122,9 @@ const ManualTransactionEntry: React.FC<ManualTransactionEntryProps> = ({ onClose
       currency: info.currency as 'KRW' | 'USD',
       assetType: info.type as AssetType,
       assetId: '', // 신규 자산이 될 것이므로 ID 없음
-      exchangeRate: info.currency === 'USD' ? exchangeRate : 1
+      exchangeRate: info.currency === 'USD' ? exchangeRate : 1,
+      ticker: info.ticker,
+      exchange: info.market
     }));
     setSearchTerm(info.name);
     setSearchResults([]);
@@ -139,7 +143,9 @@ const ManualTransactionEntry: React.FC<ManualTransactionEntryProps> = ({ onClose
       currency: asset.currency, 
       price: isCash ? 1 : asset.currentPrice, 
       assetType: asset.type,
-      exchangeRate: asset.currency === 'USD' ? exchangeRate : 1
+      exchangeRate: asset.currency === 'USD' ? exchangeRate : 1,
+      ticker: asset.ticker || '',
+      exchange: asset.exchange || ''
     }));
     setSearchTerm(asset.name);
     setShowSuggestions(false);
@@ -250,6 +256,32 @@ const ManualTransactionEntry: React.FC<ManualTransactionEntryProps> = ({ onClose
                 ))}
               </div>
             )}
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">종목코드/티커</label>
+              <input 
+                type="text" 
+                name="ticker"
+                placeholder="예: AAPL" 
+                value={formData.ticker || ''} 
+                onChange={handleChange} 
+                className="w-full px-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-bold outline-none focus:border-indigo-500 transition-all" 
+              />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">거래소</label>
+              <select name="exchange" value={formData.exchange || ''} onChange={handleChange} className="w-full px-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-bold outline-none appearance-none focus:border-indigo-500 transition-all">
+                <option value="">자동/미지정</option>
+                <option value="KRX">한국거래소 (KRX)</option>
+                <option value="NAS">나스닥 (NAS)</option>
+                <option value="NYS">뉴욕 (NYS)</option>
+                <option value="AMS">아멕스 (AMS)</option>
+                <option value="HKS">홍콩 (HKS)</option>
+                <option value="TSE">도쿄 (TSE)</option>
+              </select>
+            </div>
           </div>
 
           <div className="grid grid-cols-2 gap-4">

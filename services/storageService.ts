@@ -153,7 +153,9 @@ export const loadUserData = async (url: string, key: string, userId: string): Pr
     quantity: parseFloat(row.quantity),
     price: parseFloat(row.price),
     currency: row.currency,
-    exchangeRate: row.exchange_rate ? parseFloat(row.exchange_rate) : 1350
+    exchangeRate: row.exchange_rate ? parseFloat(row.exchange_rate) : 1350,
+    ticker: row.ticker,
+    exchange: row.exchange
   }));
 
   const history = (historyRes.data || []).map((row: any) => ({
@@ -283,6 +285,8 @@ export const saveUserData = async (url: string, key: string, data: AppData): Pro
         price: t.price,
         currency: t.currency,
         exchange_rate: t.exchangeRate,
+        ticker: t.ticker,
+        exchange: t.exchange,
         updated_at: syncTimestamp
       }))
     );

@@ -354,12 +354,17 @@ const AppContent: React.FC = () => {
         // 기존 로직에서 key가 이름|기관|계좌 조합일 경우, 이를 ID로 사용하는 문제가 있었음.
         const newId = meta?.id || Math.random().toString(36).substr(2, 9);
         
+        // [Bug Fix] 트랜잭션에 자산 ID가 없는 경우(신규 등록 등) 생성된/찾은 자산 ID를 주입하여 DB 저장 시 누락 방지
+        sortedTxs.forEach(tx => {
+           if (!tx.assetId) tx.assetId = newId;
+        });
+
         newAssets.push({
           id: newId,
           name: meta?.name || firstTx.name, 
           institution: meta?.institution || firstTx.institution, 
-          ticker: meta?.ticker || (firstTx.assetType === AssetType.STOCK ? firstTx.name : undefined),
-          exchange: meta?.exchange, 
+          ticker: meta?.ticker || firstTx.ticker || (firstTx.assetType === AssetType.STOCK ? firstTx.name : undefined),
+          exchange: meta?.exchange || firstTx.exchange, 
           type: meta?.type || firstTx.assetType, 
           quantity: totalQty,
           purchasePrice: totalCostUSD / totalQty, 
@@ -445,6 +450,8 @@ const AppContent: React.FC = () => {
       );
       if (existingAsset) {
         tx.assetId = existingAsset.id;
+        if (!tx.ticker && existingAsset.ticker) tx.ticker = existingAsset.ticker;
+        if (!tx.exchange && existingAsset.exchange) tx.exchange = existingAsset.exchange;
       }
     }
 
