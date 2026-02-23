@@ -175,12 +175,26 @@ const AppContent: React.FC = () => {
     setTimeout(() => setToast(null), 3000);
   }, []);
 
+  const [marketBriefing, setMarketBriefing] = useState<{content: string, timestamp: number} | undefined>(() => {
+    try {
+      const saved = localStorage.getItem('portflow_market_briefing');
+      return saved ? JSON.parse(saved) : undefined;
+    } catch (e) { return undefined; }
+  });
+
+  useEffect(() => {
+    if (marketBriefing) {
+      localStorage.setItem('portflow_market_briefing', JSON.stringify(marketBriefing));
+    }
+  }, [marketBriefing]);
+
   const getCurrentAppData = useCallback((): AppData => ({
     assets, transactions, accounts, user, history, lastUpdated, 
     exchangeRate: dynamicExchangeRate, 
     timestamp: localUpdateTimestamp,
-    savedStrategies
-  }), [assets, transactions, accounts, user, history, lastUpdated, dynamicExchangeRate, localUpdateTimestamp, savedStrategies]);
+    savedStrategies,
+    marketBriefing
+  }), [assets, transactions, accounts, user, history, lastUpdated, dynamicExchangeRate, localUpdateTimestamp, savedStrategies, marketBriefing]);
 
   const applyAppData = useCallback((data: AppData) => {
     if (!data) return;
@@ -194,6 +208,7 @@ const AppContent: React.FC = () => {
     if (data.user) setUser({ ...data.user });
     if (data.lastUpdated) setLastUpdated(data.lastUpdated);
     if (data.exchangeRate) setDynamicExchangeRate(data.exchangeRate);
+    if (data.marketBriefing) setMarketBriefing(data.marketBriefing);
     
     const dbTimestamp = data.timestamp || Date.now();
     setLocalUpdateTimestamp(dbTimestamp);
@@ -335,8 +350,12 @@ const AppContent: React.FC = () => {
       });
 
       if (totalQty > 0) {
+        // ID 생성 로직 개선: 기존 메타데이터 ID가 있으면 사용, 없으면 랜덤 ID 생성 (이름 사용 X)
+        // 기존 로직에서 key가 이름|기관|계좌 조합일 경우, 이를 ID로 사용하는 문제가 있었음.
+        const newId = meta?.id || Math.random().toString(36).substr(2, 9);
+        
         newAssets.push({
-          id: meta?.id || (key.length > 20 ? key : Math.random().toString(36).substr(2, 9)),
+          id: newId,
           name: meta?.name || firstTx.name, 
           institution: meta?.institution || firstTx.institution, 
           ticker: meta?.ticker || (firstTx.assetType === AssetType.STOCK ? firstTx.name : undefined),
@@ -388,11 +407,34 @@ const AppContent: React.FC = () => {
       lastUpdated: new Date().toLocaleString(),
       exchangeRate: dynamicExchangeRate,
       timestamp: now,
-      savedStrategies
+      savedStrategies,
+      marketBriefing
     };
     
     await handleSync('FORCE_PUSH', appDataToSync);
-  }, [assets, history, accounts, user, dynamicExchangeRate, savedStrategies, handleSync, recalculateAssets]);
+  }, [assets, history, accounts, user, dynamicExchangeRate, savedStrategies, marketBriefing, handleSync, recalculateAssets]);
+
+  const handleUpdateBriefing = useCallback(async (briefing: { content: string, timestamp: number }) => {
+    setMarketBriefing(briefing);
+    const now = Date.now();
+    setLocalUpdateTimestamp(now);
+    
+    // 즉시 클라우드 반영
+    const appDataToSync: AppData = {
+      assets,
+      transactions,
+      accounts,
+      user,
+      history,
+      lastUpdated,
+      exchangeRate: dynamicExchangeRate,
+      timestamp: now,
+      savedStrategies,
+      marketBriefing: briefing
+    };
+    
+    await handleSync('FORCE_PUSH', appDataToSync);
+  }, [assets, transactions, accounts, user, history, lastUpdated, dynamicExchangeRate, savedStrategies, handleSync]);
 
   const handleSaveTransaction = (tx: Transaction) => {
     if (!tx.assetId) {
@@ -444,9 +486,14 @@ const AppContent: React.FC = () => {
 
   useEffect(() => {
     if (isAuthenticated && syncConfig.supabaseUrl && syncConfig.supabaseKey) {
-      setTimeout(() => handleSync('FORCE_PULL'), 1000);
+      // 앱 실행 시 클라우드 강제 동기화 (FORCE_PULL)
+      // 약간의 지연을 두어 초기 렌더링 후 실행되도록 함
+      const timer = setTimeout(() => {
+        handleSync('FORCE_PULL');
+      }, 1000);
+      return () => clearTimeout(timer);
     }
-  }, [isAuthenticated, syncConfig.supabaseUrl]);
+  }, [isAuthenticated, syncConfig.supabaseUrl, syncConfig.supabaseKey]); // handleSync dependency removed to avoid infinite loop if handleSync changes often, though useCallback should be stable. Added syncConfig.supabaseKey for completeness.
 
   /**
    * 고유 종목 기반 배치 시세 업데이트 수행
@@ -610,7 +657,7 @@ const AppContent: React.FC = () => {
     <div className="flex flex-col h-[100dvh] bg-[#F4F7FB] overflow-hidden max-w-md mx-auto shadow-2xl relative font-sans">
       <main className="flex-1 overflow-y-auto no-scrollbar relative">
         <Routes>
-          <Route path="/" element={<Dashboard assets={assets} accounts={accounts} transactions={transactions} user={user} history={history} onRefresh={handleUpdatePrices} isUpdating={isUpdatingPrices} lastUpdated={lastUpdated} exchangeRate={dynamicExchangeRate} />} />
+          <Route path="/" element={<Dashboard assets={assets} accounts={accounts} transactions={transactions} user={user} history={history} onRefresh={handleUpdatePrices} isUpdating={isUpdatingPrices} lastUpdated={lastUpdated} exchangeRate={dynamicExchangeRate} marketBriefing={marketBriefing} onUpdateBriefing={handleUpdateBriefing} />} />
           <Route path="/assets" element={<AssetList assets={assets} setAssets={setAssets} onAddAsset={() => setIsManualModalOpen(true)} onDeleteAsset={(id) => setDeletingAsset(assets.find(a=>a.id===id)||null)} onEditAsset={(a) => { setEditingAsset(a); setIsManualModalOpen(true); }} onSync={() => handleSync('SMART')} onRefreshPrices={handleUpdatePrices} isRefreshing={isUpdatingPrices} exchangeRate={dynamicExchangeRate} accounts={accounts} />} />
           <Route path="/advisor" element={<AIAdvisor assets={assets} accounts={accounts} onApplyRebalancing={() => {}} exchangeRate={dynamicExchangeRate} user={user} onUpdateUser={setUser} savedStrategies={savedStrategies} onSaveStrategy={handleSaveAIStrategy} onDeleteStrategy={handleDeleteAIStrategy} showToast={showToast} />} />
           <Route path="/history" element={<TransactionHistory transactions={transactions} accounts={accounts} onDelete={handleDeleteTransaction} onEdit={(tx) => { setEditingTransaction(tx); setIsTransactionModalOpen(true); }} onUpdate={performDataUpdateAndSync} onAdd={() => setIsTransactionModalOpen(true)} exchangeRate={dynamicExchangeRate} />} />

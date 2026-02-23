@@ -159,4 +159,8 @@ export interface AppData {
   exchangeRate: number;
   timestamp: number;
   savedStrategies?: SavedStrategy[];
+  marketBriefing?: {
+    content: string;
+    timestamp: number;
+  };
 }

@@ -30,15 +30,16 @@ interface DashboardProps {
   isUpdating?: boolean;
   lastUpdated?: string;
   exchangeRate: number;
+  marketBriefing?: { content: string, timestamp: number };
+  onUpdateBriefing: (briefing: { content: string, timestamp: number }) => void;
 }
 
 const COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ec4899', '#8b5cf6', '#64748b', '#2dd4bf', '#fb7185'];
 
-const Dashboard: React.FC<DashboardProps> = ({ assets, accounts, user, onRefresh, isUpdating, lastUpdated, history, exchangeRate }) => {
+const Dashboard: React.FC<DashboardProps> = ({ assets, accounts, user, onRefresh, isUpdating, lastUpdated, history, exchangeRate, marketBriefing, onUpdateBriefing }) => {
   const [isScoreModalOpen, setIsScoreModalOpen] = useState(false);
   const [isRiskModalOpen, setIsRiskModalOpen] = useState(false);
   const [compTab, setCompTab] = useState<'TYPE' | 'INST' | 'CURRENCY' | 'TICKER' | 'ACCOUNT_TYPE'>('TYPE');
-  const [briefing, setBriefing] = useState<string>('');
   const [isBriefingLoading, setIsBriefingLoading] = useState(false);
 
   const handleFetchBriefing = async () => {
@@ -47,9 +48,9 @@ const Dashboard: React.FC<DashboardProps> = ({ assets, accounts, user, onRefresh
     triggerHaptic('medium');
     try {
       const text = await getMarketBriefing();
-      setBriefing(text);
+      onUpdateBriefing({ content: text, timestamp: Date.now() });
     } catch (e) {
-      setBriefing("시장 정보를 불러오는데 실패했습니다. 잠시 후 다시 시도해주세요.");
+      // Error handling is done inside getMarketBriefing or just keep old state
     } finally {
       setIsBriefingLoading(false);
     }
@@ -212,22 +213,29 @@ const Dashboard: React.FC<DashboardProps> = ({ assets, accounts, user, onRefresh
               <div className="p-1.5 bg-indigo-600 text-white rounded-lg"><Sparkles size={14} /></div>
               <h4 className="text-[11px] font-black text-slate-800 uppercase tracking-widest">AI 데일리 마켓 브리핑</h4>
             </div>
-            {briefing && !isBriefingLoading && (
-              <button onClick={handleFetchBriefing} className="p-1.5 bg-indigo-50 text-indigo-600 rounded-full active:scale-90 transition-all" title="새로고침">
-                <RefreshCw size={12} />
-              </button>
-            )}
+            <div className="flex items-center gap-2">
+              {marketBriefing && (
+                <span className="text-[9px] font-bold text-slate-400">
+                  {new Date(marketBriefing.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} 업데이트
+                </span>
+              )}
+              {marketBriefing && !isBriefingLoading && (
+                <button onClick={handleFetchBriefing} className="p-1.5 bg-indigo-50 text-indigo-600 rounded-full active:scale-90 transition-all" title="새로고침">
+                  <RefreshCw size={12} />
+                </button>
+              )}
+            </div>
           </div>
           
-          <div className={`bg-slate-50 rounded-2xl border border-slate-100 min-h-[70px] flex items-center justify-center relative ${!briefing && !isBriefingLoading ? 'p-2' : 'p-4'}`}>
+          <div className={`bg-slate-50 rounded-2xl border border-slate-100 min-h-[70px] flex items-center justify-center relative ${!marketBriefing && !isBriefingLoading ? 'p-2' : 'p-4'}`}>
             {isBriefingLoading ? (
               <div className="space-y-2 w-full">
                 <div className="h-2 w-full bg-slate-200 rounded animate-pulse"></div>
                 <div className="h-2 w-3/4 bg-slate-200 rounded animate-pulse"></div>
               </div>
-            ) : briefing ? (
+            ) : marketBriefing ? (
               <p className="text-[11px] font-bold text-slate-600 leading-relaxed whitespace-pre-line italic w-full text-left animate-in fade-in">
-                {briefing}
+                {marketBriefing.content}
               </p>
             ) : (
               <button 
