@@ -120,7 +120,10 @@ export const getAccessToken = async (appKey: string, appSecret: string, baseUrl:
 
 // 2. 국내 주식 현재가 조회
 export const getDomesticPrice = async (symbol: string, token: string, appKey: string, appSecret: string, baseUrl: string) => {
-  if (!symbol || symbol.length !== 6) throw new Error(`Invalid Domestic Symbol: ${symbol}`);
+  if (!symbol || symbol.length !== 6) {
+    console.warn(`Skipping invalid domestic symbol: ${symbol}`);
+    return { price: 0, source: 'KIS_REAL' as DataSource };
+  }
   
   // 프리뷰용 랜덤 가격 생성
   const randomPrice = Math.floor(Math.random() * 40000) + 50000;
@@ -180,30 +183,37 @@ export const getOverseasPrice = async (symbol: string, exchange: string, token: 
 };
 
 // 4. 통합 업데이트 함수
-export const updateAssetsWithKis = async (assets: Asset[], config: KisConfig): Promise<{ updatedAssets: Asset[]; exchangeRate?: number; dataSource: DataSource }> => {
+export const updateAssetsWithKis = async (assets: Asset[], config: KisConfig, onProgress?: (current: number, total: number) => void): Promise<{ updatedAssets: Asset[]; exchangeRate?: number; dataSource: DataSource }> => {
   const baseUrl = config.serverType === 'VIRTUAL' ? BASE_URL_VIRTUAL : BASE_URL_REAL;
   const token = await getAccessToken(config.appKey, config.appSecret, baseUrl);
   
   const updatedAssets = [...assets];
   let finalSource: DataSource = 'KIS_REAL';
   
+  let processed = 0;
+  const total = updatedAssets.filter(a => a.type !== AssetType.CASH && a.ticker).length;
+
   const promises = updatedAssets.map(async (asset) => {
     if (asset.type === AssetType.CASH || !asset.ticker) return;
 
     try {
       let result;
       if (asset.currency === 'KRW') {
+        if (asset.ticker.length !== 6) return; // Skip invalid domestic symbols
         result = await getDomesticPrice(asset.ticker, token, config.appKey, config.appSecret, baseUrl);
       } else {
         result = await getOverseasPrice(asset.ticker, asset.exchange || 'NAS', token, config.appKey, config.appSecret, baseUrl);
       }
       
-      if (result.price > 0) {
+      if (result && result.price > 0) {
         asset.currentPrice = result.price;
         finalSource = result.source;
       }
     } catch (e) {
       console.error(`KIS Update Failed for ${asset.name}:`, e);
+    } finally {
+      processed++;
+      if (onProgress) onProgress(processed, total);
     }
   });
 

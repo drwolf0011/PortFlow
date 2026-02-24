@@ -28,6 +28,7 @@ interface DashboardProps {
   history: {date: string, value: number}[];
   onRefresh: () => void;
   isUpdating?: boolean;
+  updateStatus?: { api: string, current: number, total: number } | null;
   lastUpdated?: string;
   exchangeRate: number;
   marketBriefing?: { content: string, timestamp: number };
@@ -36,7 +37,7 @@ interface DashboardProps {
 
 const COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ec4899', '#8b5cf6', '#64748b', '#2dd4bf', '#fb7185'];
 
-const Dashboard: React.FC<DashboardProps> = ({ assets, accounts, user, onRefresh, isUpdating, lastUpdated, history, exchangeRate, marketBriefing, onUpdateBriefing }) => {
+const Dashboard: React.FC<DashboardProps> = ({ assets, accounts, user, onRefresh, isUpdating, updateStatus, lastUpdated, history, exchangeRate, marketBriefing, onUpdateBriefing }) => {
   const [isScoreModalOpen, setIsScoreModalOpen] = useState(false);
   const [isRiskModalOpen, setIsRiskModalOpen] = useState(false);
   const [compTab, setCompTab] = useState<'TYPE' | 'INST' | 'CURRENCY' | 'TICKER' | 'ACCOUNT_TYPE'>('TYPE');
@@ -185,7 +186,14 @@ const Dashboard: React.FC<DashboardProps> = ({ assets, accounts, user, onRefresh
               안녕하세요, <span className="text-indigo-600">{user?.name || '사용자'}</span>님
             </h2>
             <div className="flex items-center gap-1.5 text-[10px] font-bold text-slate-400 mt-1">
-              <Clock size={12} className={isUpdating ? 'animate-pulse text-indigo-500' : ''} /> {isUpdating ? '실시간 동기화 중...' : (lastUpdated || '시세 확인 중...')}
+              <Clock size={12} className={isUpdating ? 'animate-pulse text-indigo-500' : ''} /> 
+              {isUpdating ? (
+                updateStatus ? (
+                  <span className="text-indigo-600">
+                    {updateStatus.api} 갱신 중... ({updateStatus.current}/{updateStatus.total})
+                  </span>
+                ) : '실시간 동기화 중...'
+              ) : (lastUpdated || '시세 확인 중...')}
             </div>
           </div>
           <div className="flex items-center gap-2">

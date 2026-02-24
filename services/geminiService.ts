@@ -24,6 +24,31 @@ interface CachedPrice {
 const PRICE_CACHE = new Map<string, CachedPrice>();
 const CACHE_TTL = 30 * 60 * 1000; // 30분 캐시
 
+// 로컬 스토리지에서 캐시 불러오기
+const loadCacheFromStorage = () => {
+  try {
+    const stored = localStorage.getItem('PRICE_CACHE');
+    if (stored) {
+      const parsed = JSON.parse(stored);
+      Object.entries(parsed).forEach(([key, value]) => {
+        PRICE_CACHE.set(key, value as CachedPrice);
+      });
+    }
+  } catch (e) {
+    console.warn('Failed to load price cache from storage', e);
+  }
+};
+loadCacheFromStorage();
+
+const saveCacheToStorage = () => {
+  try {
+    const obj = Object.fromEntries(PRICE_CACHE.entries());
+    localStorage.setItem('PRICE_CACHE', JSON.stringify(obj));
+  } catch (e) {
+    console.warn('Failed to save price cache to storage', e);
+  }
+};
+
 const safeJsonParse = (text: string) => {
   if (!text) return null;
   let cleaned = text.replace(/```json|```/g, "").trim();
@@ -150,7 +175,7 @@ export const getMarketBriefing = async (): Promise<string> => {
 /**
  * 효율적인 시세 조회를 위해 중복을 제거하고 Ticker 우선 조회를 수행합니다.
  */
-export const updateAssetPrices = async (assets: Asset[]): Promise<PriceUpdateResult> => {
+export const updateAssetPrices = async (assets: Asset[], onProgress?: (current: number, total: number) => void): Promise<PriceUpdateResult> => {
   const now = Date.now();
   const allUpdatedPrices: Record<string, number> = {};
   let latestExchangeRate: number | undefined;
@@ -183,10 +208,11 @@ export const updateAssetPrices = async (assets: Asset[]): Promise<PriceUpdateRes
   if (needUpdate.length > 0) {
     totalFetchedItems = needUpdate.length;
     const itemChunks = [];
-    for (let i = 0; i < needUpdate.length; i += 8) {
-      itemChunks.push(needUpdate.slice(i, i + 8));
+    for (let i = 0; i < needUpdate.length; i += 20) {
+      itemChunks.push(needUpdate.slice(i, i + 20));
     }
 
+    let processed = 0;
     for (const chunk of itemChunks) {
       const chunkData = chunk.map(([mapKey, info]) => ({ 
         mapKey, 
@@ -195,9 +221,9 @@ export const updateAssetPrices = async (assets: Asset[]): Promise<PriceUpdateRes
         currency: info.currency 
       }));
       
-      const prompt = `Investigate the latest market prices for these assets and provide the current USD/KRW exchange rate. Use ticker symbols for search if provided, otherwise use names.
+      const prompt = `Find current market prices for these assets and the USD/KRW exchange rate. Use ticker if available.
       Input: ${JSON.stringify(chunkData)}
-      Return results as JSON with "prices" array containing {mapKey, price} and an "exchangeRate" number.`;
+      Return ONLY valid JSON with "prices" array containing {mapKey, price} and an "exchangeRate" number.`;
       
       try {
         const response = await generateContentWithRetry({
@@ -233,12 +259,16 @@ export const updateAssetPrices = async (assets: Asset[]): Promise<PriceUpdateRes
             allUpdatedPrices[p.mapKey] = p.price;
             PRICE_CACHE.set(p.mapKey, { price: p.price, timestamp: now });
           });
+          saveCacheToStorage();
         }
         if (parsed?.exchangeRate) {
           latestExchangeRate = parsed.exchangeRate;
         }
       } catch (error) {
         console.error("Price update failed for chunk:", error);
+      } finally {
+        processed += chunk.length;
+        if (onProgress) onProgress(processed, totalFetchedItems);
       }
     }
   }
@@ -333,7 +363,7 @@ export const getAIDiagnosis = async (
   }).join('\n');
 
   const prompt = `
-    대한민국 상위 1%를 담당하는 독설가 스타일의 냉철한 자산관리 전문가(PB)로서 아래 포트폴리오를 정밀 진단하십시오.
+    대한민국 상위 1%를 담당하는 워런버핏 스타일의 짐사이먼스같은 냉철한 자산관리 전문가(PB)로서 아래 포트폴리오를 정밀 진단하십시오.
     단순한 칭찬보다는 **개선점, 리스크, 비효율성**을 찾아내는 데 집중하십시오.
 
     ${userProfile?.goalPrompt ? `[사용자 투자 원칙]: ${userProfile.goalPrompt}` : ""}

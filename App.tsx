@@ -131,9 +131,42 @@ const AppContent: React.FC = () => {
   const [kisConfig, setKisConfig] = useState<KisConfig>(() => {
     try {
       const saved = localStorage.getItem('portflow_kis_config');
-      return saved ? JSON.parse(saved) : { useKis: false, serverType: 'REAL', appKey: '', appSecret: '', accountNo: '' };
+      const baseConfig = saved ? JSON.parse(saved) : { useKis: false, serverType: 'REAL', appKey: '', appSecret: '', accountNo: '' };
+      
+      // user 정보에서 KIS 설정 불러오기 (우선순위)
+      const userSaved = localStorage.getItem('portflow_user');
+      if (userSaved) {
+        const parsedUser = JSON.parse(userSaved);
+        if (parsedUser.kisConfig) {
+          return {
+            ...baseConfig,
+            appKey: parsedUser.kisConfig.appKey || baseConfig.appKey,
+            appSecret: parsedUser.kisConfig.appSecret || baseConfig.appSecret
+          };
+        }
+      }
+      return baseConfig;
     } catch (e) { return { useKis: false, serverType: 'REAL', appKey: '', appSecret: '', accountNo: '' }; }
   });
+
+  // KIS 설정 변경 시 UserProfile에도 저장
+  useEffect(() => {
+    localStorage.setItem('portflow_kis_config', JSON.stringify(kisConfig));
+    if (user && (kisConfig.appKey || kisConfig.appSecret)) {
+      setUser(prev => {
+        if (!prev) return prev;
+        const updatedUser = {
+          ...prev,
+          kisConfig: {
+            appKey: kisConfig.appKey,
+            appSecret: kisConfig.appSecret
+          }
+        };
+        localStorage.setItem('portflow_user', JSON.stringify(updatedUser));
+        return updatedUser;
+      });
+    }
+  }, [kisConfig, user?.id]);
 
   const [localUpdateTimestamp, setLocalUpdateTimestamp] = useState<number>(() => Date.now());
   const [isDirty, setIsDirty] = useState(false);
@@ -148,6 +181,7 @@ const AppContent: React.FC = () => {
   const [toast, setToast] = useState<string | null>(null);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isUpdatingPrices, setIsUpdatingPrices] = useState(false);
+  const [priceUpdateStatus, setPriceUpdateStatus] = useState<{ api: string, current: number, total: number } | null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
   const isSyncingRef = useRef(false);
   
@@ -509,39 +543,62 @@ const AppContent: React.FC = () => {
     if (assets.length === 0) return showToast("갱신할 자산이 없습니다.");
     
     const now = Date.now();
-    const COOLDOWN_TIME = 10 * 60 * 1000; // 10 minutes
+    const COOLDOWN_TIME = 10 * 1000; // 10 seconds
     const lastTime = lastSyncTimestamp || 0;
     
     if (now - lastTime < COOLDOWN_TIME) {
       const remainingSeconds = Math.ceil((COOLDOWN_TIME - (now - lastTime)) / 1000);
-      const m = Math.floor(remainingSeconds / 60);
-      const s = remainingSeconds % 60;
-      showToast(`이 계정은 최근 10분 이내에 갱신되었습니다. ${m}분 ${s}초 후 다시 가능합니다.`);
+      showToast(`최근 10초 이내에 갱신되었습니다. ${remainingSeconds}초 후 다시 가능합니다.`);
       return;
     }
 
     setIsUpdatingPrices(true);
     try {
-      let updatedAssets = assets;
+      let updatedAssets = [...assets];
       let newRate = dynamicExchangeRate;
       let successMsg = "시세가 갱신되었습니다.";
       let fetchedItemsCount = 0;
 
       if (kisConfig.useKis && kisConfig.appKey && kisConfig.appSecret) {
         try {
-          const kisResult = await updateAssetsWithKis(assets, kisConfig);
-          updatedAssets = kisResult.updatedAssets;
-          if (kisResult.exchangeRate) newRate = kisResult.exchangeRate;
-          successMsg = kisResult.dataSource === 'FALLBACK_MOCK' ? "⚠️ 가상 시세 적용됨" : "실시간 시세 갱신 완료";
-        } catch {
-          const geminiResult = await updateAssetPrices(assets);
+          const kisEligible = assets.filter(a => a.type !== AssetType.CASH && a.ticker && (a.currency === 'USD' || (a.currency === 'KRW' && a.ticker.length === 6)));
+          const geminiEligible = assets.filter(a => a.type !== AssetType.CASH && (!a.ticker || (a.currency === 'KRW' && a.ticker.length !== 6)));
+
+          if (kisEligible.length > 0) {
+            setPriceUpdateStatus({ api: '한국투자증권 API', current: 0, total: kisEligible.length });
+            const kisResult = await updateAssetsWithKis(kisEligible, kisConfig, (c, t) => setPriceUpdateStatus({ api: '한국투자증권 API', current: c, total: t }));
+            
+            kisResult.updatedAssets.forEach(ka => {
+              const idx = updatedAssets.findIndex(a => a.id === ka.id);
+              if (idx !== -1) updatedAssets[idx] = ka;
+            });
+            if (kisResult.exchangeRate) newRate = kisResult.exchangeRate;
+            successMsg = kisResult.dataSource === 'FALLBACK_MOCK' ? "⚠️ 가상 시세 적용됨" : "실시간 시세 갱신 완료";
+          }
+
+          if (geminiEligible.length > 0) {
+            setPriceUpdateStatus({ api: 'Gemini AI API (펀드/기타)', current: 0, total: geminiEligible.length });
+            const geminiResult = await updateAssetPrices(geminiEligible, (c, t) => setPriceUpdateStatus({ api: 'Gemini AI API', current: c, total: t }));
+            geminiResult.updatedAssets.forEach(ga => {
+              const idx = updatedAssets.findIndex(a => a.id === ga.id);
+              if (idx !== -1) updatedAssets[idx] = ga;
+            });
+            if (geminiResult.exchangeRate) newRate = geminiResult.exchangeRate;
+            fetchedItemsCount += geminiResult.fetchedCount;
+            successMsg += kisEligible.length > 0 ? ` + AI 갱신(${fetchedItemsCount}종목)` : `AI 갱신 완료 (${fetchedItemsCount}종목 조회)`;
+          }
+        } catch (e) {
+          console.error("KIS Update failed, falling back to Gemini entirely", e);
+          setPriceUpdateStatus({ api: 'Gemini AI API', current: 0, total: assets.filter(a => a.type !== AssetType.CASH).length });
+          const geminiResult = await updateAssetPrices(assets, (c, t) => setPriceUpdateStatus({ api: 'Gemini AI API', current: c, total: t }));
           updatedAssets = geminiResult.updatedAssets;
           if (geminiResult.exchangeRate) newRate = geminiResult.exchangeRate;
           fetchedItemsCount = geminiResult.fetchedCount;
           successMsg = `AI 갱신 완료 (${fetchedItemsCount}종목 조회)`;
         }
       } else {
-        const result = await updateAssetPrices(assets);
+        setPriceUpdateStatus({ api: 'Gemini AI API', current: 0, total: assets.filter(a => a.type !== AssetType.CASH).length });
+        const result = await updateAssetPrices(assets, (c, t) => setPriceUpdateStatus({ api: 'Gemini AI API', current: c, total: t }));
         updatedAssets = result.updatedAssets;
         if (result.exchangeRate) newRate = result.exchangeRate;
         fetchedItemsCount = result.fetchedCount;
@@ -593,6 +650,7 @@ const AppContent: React.FC = () => {
       showToast(`오류: ${e.message}`); 
     } finally { 
       setIsUpdatingPrices(false); 
+      setPriceUpdateStatus(null);
     }
   }, [assets, kisConfig, dynamicExchangeRate, lastSyncTimestamp, transactions, accounts, user, history, savedStrategies, handleSync, showToast]);
 
@@ -664,7 +722,7 @@ const AppContent: React.FC = () => {
     <div className="flex flex-col h-[100dvh] bg-[#F4F7FB] overflow-hidden max-w-md mx-auto shadow-2xl relative font-sans">
       <main className="flex-1 overflow-y-auto no-scrollbar relative">
         <Routes>
-          <Route path="/" element={<Dashboard assets={assets} accounts={accounts} transactions={transactions} user={user} history={history} onRefresh={handleUpdatePrices} isUpdating={isUpdatingPrices} lastUpdated={lastUpdated} exchangeRate={dynamicExchangeRate} marketBriefing={marketBriefing} onUpdateBriefing={handleUpdateBriefing} />} />
+          <Route path="/" element={<Dashboard assets={assets} accounts={accounts} transactions={transactions} user={user} history={history} onRefresh={handleUpdatePrices} isUpdating={isUpdatingPrices} updateStatus={priceUpdateStatus} lastUpdated={lastUpdated} exchangeRate={dynamicExchangeRate} marketBriefing={marketBriefing} onUpdateBriefing={handleUpdateBriefing} />} />
           <Route path="/assets" element={<AssetList assets={assets} setAssets={setAssets} onAddAsset={() => setIsManualModalOpen(true)} onDeleteAsset={(id) => setDeletingAsset(assets.find(a=>a.id===id)||null)} onEditAsset={(a) => { setEditingAsset(a); setIsManualModalOpen(true); }} onSync={() => handleSync('SMART')} onRefreshPrices={handleUpdatePrices} isRefreshing={isUpdatingPrices} exchangeRate={dynamicExchangeRate} accounts={accounts} />} />
           <Route path="/advisor" element={<AIAdvisor assets={assets} accounts={accounts} onApplyRebalancing={() => {}} exchangeRate={dynamicExchangeRate} user={user} onUpdateUser={setUser} savedStrategies={savedStrategies} onSaveStrategy={handleSaveAIStrategy} onDeleteStrategy={handleDeleteAIStrategy} showToast={showToast} />} />
           <Route path="/history" element={<TransactionHistory transactions={transactions} accounts={accounts} onDelete={handleDeleteTransaction} onEdit={(tx) => { setEditingTransaction(tx); setIsTransactionModalOpen(true); }} onUpdate={performDataUpdateAndSync} onAdd={() => setIsTransactionModalOpen(true)} exchangeRate={dynamicExchangeRate} />} />
@@ -702,7 +760,7 @@ const AppContent: React.FC = () => {
             <div className="flex-1 overflow-y-auto no-scrollbar p-6 space-y-8 pb-safe">
               <section className="space-y-4">
                  <div className="flex items-center justify-between"><h4 className="text-[11px] font-black text-slate-400 uppercase tracking-widest px-1 flex items-center gap-2"><Zap size={14} className="text-amber-500" /> 실시간 시세 연동</h4><button onClick={() => setKisConfig(p => ({ ...p, useKis: !p.useKis }))} className={`w-10 h-6 rounded-full p-1 transition-all ${kisConfig.useKis ? 'bg-indigo-600' : 'bg-slate-200'}`}><div className={`w-4 h-4 rounded-full bg-white shadow-sm transition-all ${kisConfig.useKis ? 'translate-x-4' : ''}`}></div></button></div>
-                 {kisConfig.useKis && <div className="bg-slate-50 p-5 rounded-[2rem] border border-slate-100 space-y-4 animate-in slide-in-from-top-2"><div className="bg-white p-1 rounded-xl flex shadow-sm border border-slate-200"><button onClick={() => setKisConfig(p => ({ ...p, serverType: 'REAL' }))} className={`flex-1 py-2 text-[10px] font-black rounded-lg ${kisConfig.serverType !== 'VIRTUAL' ? 'bg-slate-800 text-white' : 'text-slate-400'}`}>실전투자</button><button onClick={() => setKisConfig(p => ({ ...p, serverType: 'VIRTUAL' }))} className={`flex-1 py-2 text-[10px] font-black rounded-lg ${kisConfig.serverType === 'VIRTUAL' ? 'bg-amber-500 text-white' : 'text-slate-400'}`}>모의투자</button></div><input type="password" value={kisConfig.appKey} onChange={e => setKisConfig(p => ({ ...p, appKey: e.target.value }))} placeholder="App Key" className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl text-xs font-bold outline-none focus:border-indigo-500" /><input type="password" value={kisConfig.appSecret} onChange={e => setKisConfig(p => ({ ...p, appSecret: e.target.value }))} placeholder="App Secret" className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl text-xs font-bold outline-none focus:border-indigo-500" /></div>}
+                 {kisConfig.useKis && <div className="bg-slate-50 p-5 rounded-[2rem] border border-slate-100 space-y-4 animate-in slide-in-from-top-2"><div className="bg-white p-1 rounded-xl flex shadow-sm border border-slate-200"><button onClick={() => setKisConfig(p => ({ ...p, serverType: 'REAL' }))} className={`flex-1 py-2 text-[10px] font-black rounded-lg ${kisConfig.serverType !== 'VIRTUAL' ? 'bg-slate-800 text-white' : 'text-slate-400'}`}>실전투자</button><button onClick={() => setKisConfig(p => ({ ...p, serverType: 'VIRTUAL' }))} className={`flex-1 py-2 text-[10px] font-black rounded-lg ${kisConfig.serverType === 'VIRTUAL' ? 'bg-amber-500 text-white' : 'text-slate-400'}`}>모의투자</button></div><input type="text" value={kisConfig.appKey} onChange={e => setKisConfig(p => ({ ...p, appKey: e.target.value }))} placeholder="App Key" className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl text-xs font-bold outline-none focus:border-indigo-500" /><input type="text" value={kisConfig.appSecret} onChange={e => setKisConfig(p => ({ ...p, appSecret: e.target.value }))} placeholder="App Secret" className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl text-xs font-bold outline-none focus:border-indigo-500" /></div>}
               </section>
 
               <section className="space-y-4">

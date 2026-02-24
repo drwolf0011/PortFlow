@@ -194,7 +194,8 @@ export const loadUserData = async (url: string, key: string, userId: string): Pr
     savedStrategies,
     lastUpdated: lastUpdatedStr,
     exchangeRate: restoredExchangeRate,
-    timestamp: dbUpdatedTime ? new Date(dbUpdatedTime).getTime() : Date.now()
+    timestamp: dbUpdatedTime ? new Date(dbUpdatedTime).getTime() : Date.now(),
+    marketBriefing: userRes.data.market_briefing
   };
 };
 
@@ -213,6 +214,7 @@ export const saveUserData = async (url: string, key: string, data: AppData): Pro
     pin: data.user?.pin,
     investment_goal: data.user?.investmentGoal,
     goal_prompt: data.user?.goalPrompt,
+    market_briefing: data.marketBriefing,
     updated_at: syncTimestamp
   });
   if (userError) throw new Error(`User Save Error: ${userError.message}`);

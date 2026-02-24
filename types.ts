@@ -84,6 +84,10 @@ export interface UserProfile {
     apiKey?: string; // Legacy
     binId?: string; // Legacy
   };
+  kisConfig?: {
+    appKey?: string;
+    appSecret?: string;
+  };
 }
 
 // 중앙 사용자 디렉토리 저장 구조 (Supabase에서는 Users 테이블 조회로 대체)
