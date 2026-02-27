@@ -2,10 +2,26 @@
 import { createClient } from '@supabase/supabase-js';
 import { AppData, UserProfile, UsersRegistry, Asset, Account, Transaction, SavedStrategy } from '../types';
 
-// Helper to get Supabase client
+// Singleton client cache
+let supabaseInstance: any = null;
+let currentUrl: string | null = null;
+let currentKey: string | null = null;
+
+// Helper to get Supabase client (Singleton)
 const getClient = (url: string, key: string) => {
   if (!url || !key) throw new Error("Supabase credentials missing");
-  return createClient(url, key);
+  
+  // URL이나 Key가 바뀌지 않았다면 기존 인스턴스 반환
+  if (supabaseInstance && currentUrl === url && currentKey === key) {
+    return supabaseInstance;
+  }
+  
+  // 새로운 인스턴스 생성 및 캐싱
+  supabaseInstance = createClient(url, key);
+  currentUrl = url;
+  currentKey = key;
+  
+  return supabaseInstance;
 };
 
 export class CloudAuthError extends Error {
@@ -113,7 +129,11 @@ export const loadUserData = async (url: string, key: string, userId: string): Pr
     investmentGoal: userRes.data.investment_goal,
     goalPrompt: userRes.data.goal_prompt,
     dataBinId: userRes.data.user_id,
-    cloudSync: { supabaseUrl: url, supabaseKey: key }
+    cloudSync: { supabaseUrl: url, supabaseKey: key },
+    kisConfig: {
+      appKey: userRes.data.kis_app_key,
+      appSecret: userRes.data.kis_app_secret
+    }
   };
 
   const accounts: Account[] = (accountsRes.data || []).map((row: any) => ({
@@ -214,7 +234,10 @@ export const saveUserData = async (url: string, key: string, data: AppData): Pro
     pin: data.user?.pin,
     investment_goal: data.user?.investmentGoal,
     goal_prompt: data.user?.goalPrompt,
-    market_briefing: data.marketBriefing,
+    // Ensure marketBriefing is stored as a proper JSON object, and has content
+    market_briefing: (data.marketBriefing && data.marketBriefing.content) ? data.marketBriefing : null,
+    kis_app_key: data.user?.kisConfig?.appKey,
+    kis_app_secret: data.user?.kisConfig?.appSecret,
     updated_at: syncTimestamp
   });
   if (userError) throw new Error(`User Save Error: ${userError.message}`);
@@ -329,5 +352,63 @@ export const saveUserData = async (url: string, key: string, data: AppData): Pro
     if (error) console.error("Strategies Save Error", error);
   } else {
     await supabase.from('saved_strategies').delete().eq('user_id', userId);
+  }
+};
+
+// --- KIS Token Management ---
+
+export const saveKisToken = async (url: string, key: string, userId: string, token: string, expiresAt: string, isVirtual: boolean): Promise<void> => {
+  const supabase = getClient(url, key);
+  
+  // 1. Get existing tokens first to preserve the other environment's token
+  const { data: userData } = await supabase.from('users').select('kis_token').eq('user_id', userId).single();
+  
+  let tokenData: any = {};
+  if (userData?.kis_token) {
+    try {
+      // If it's already a JSON string, parse it
+      tokenData = typeof userData.kis_token === 'string' && userData.kis_token.startsWith('{') 
+        ? JSON.parse(userData.kis_token) 
+        : {};
+    } catch (e) {
+      tokenData = {};
+    }
+  }
+
+  const envKey = isVirtual ? 'VIRTUAL' : 'REAL';
+  tokenData[envKey] = { token, expiresAt };
+
+  const { error } = await supabase.from('users').update({
+    kis_token: JSON.stringify(tokenData),
+    kis_token_expires_at: expiresAt // Keep this for backward compatibility or simple checks
+  }).eq('user_id', userId);
+  
+  if (error) console.error("KIS Token Save Error", error);
+};
+
+export const loadKisToken = async (url: string, key: string, userId: string, isVirtual: boolean): Promise<{ token: string, expiresAt: string } | null> => {
+  const supabase = getClient(url, key);
+  const { data, error } = await supabase.from('users').select('kis_token').eq('user_id', userId).single();
+  
+  if (error || !data || !data.kis_token) return null;
+  
+  try {
+    const tokenData = typeof data.kis_token === 'string' && data.kis_token.startsWith('{')
+      ? JSON.parse(data.kis_token)
+      : null;
+      
+    if (!tokenData) return null;
+    
+    const envKey = isVirtual ? 'VIRTUAL' : 'REAL';
+    const envToken = tokenData[envKey];
+    
+    if (!envToken || !envToken.token) return null;
+    
+    return {
+      token: envToken.token,
+      expiresAt: envToken.expiresAt
+    };
+  } catch (e) {
+    return null;
   }
 };

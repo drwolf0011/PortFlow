@@ -204,6 +204,9 @@ export const updateAssetPrices = async (assets: Asset[], onProgress?: (current: 
 
   const needUpdate = Array.from(uniqueItemsMap.entries());
   let totalFetchedItems = 0;
+  
+  // 전체 대상 자산 개수 (현금 제외)
+  const totalAssetsToUpdate = assets.filter(a => a.type !== AssetType.CASH).length;
 
   if (needUpdate.length > 0) {
     totalFetchedItems = needUpdate.length;
@@ -268,9 +271,17 @@ export const updateAssetPrices = async (assets: Asset[], onProgress?: (current: 
         console.error("Price update failed for chunk:", error);
       } finally {
         processed += chunk.length;
-        if (onProgress) onProgress(processed, totalFetchedItems);
+        if (onProgress) {
+          // 고유 종목 처리 비율을 전체 자산 개수에 비례하여 계산
+          const processedRatio = processed / totalFetchedItems;
+          const currentAssetsProcessed = Math.floor(totalAssetsToUpdate * processedRatio);
+          onProgress(currentAssetsProcessed, totalAssetsToUpdate);
+        }
       }
     }
+  } else {
+    // 모든 항목이 캐시된 경우 바로 100% 완료 처리
+    if (onProgress) onProgress(totalAssetsToUpdate, totalAssetsToUpdate);
   }
 
   // 매핑 로직: Ticker로 먼저 찾고, 없으면 Name으로 찾음 (User의 요청사항 반영)
@@ -292,7 +303,7 @@ export const updateAssetPrices = async (assets: Asset[], onProgress?: (current: 
     return foundPrice !== undefined ? { ...asset, currentPrice: foundPrice } : asset;
   });
 
-  return { updatedAssets, exchangeRate: latestExchangeRate, fetchedCount: totalFetchedItems };
+  return { updatedAssets, exchangeRate: latestExchangeRate, fetchedCount: totalAssetsToUpdate };
 };
 
 export const generateGoalPrompt = async (answers: any): Promise<{ goal: string, prompt: string }> => {

@@ -222,7 +222,7 @@ const Dashboard: React.FC<DashboardProps> = ({ assets, accounts, user, onRefresh
               <h4 className="text-[11px] font-black text-slate-800 uppercase tracking-widest">AI 데일리 마켓 브리핑</h4>
             </div>
             <div className="flex items-center gap-2">
-              {marketBriefing && (
+              {marketBriefing && !isNaN(new Date(marketBriefing.timestamp).getTime()) && (
                 <span className="text-[9px] font-bold text-slate-400">
                   {new Date(marketBriefing.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} 업데이트
                 </span>

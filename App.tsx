@@ -24,7 +24,7 @@ import AuthScreen from './components/AuthScreen';
 import { EXCHANGE_RATE as DEFAULT_EXCHANGE_RATE, SUPABASE_URL, SUPABASE_KEY } from './constants';
 import { Asset, Transaction, TransactionType, AssetType, Account, SyncConfig, AppData, RebalancingStrategy, UserProfile, DiagnosisResponse, SavedStrategy, AccountType, KisConfig } from './types';
 import { updateAssetPrices, enrichAssetData } from './services/geminiService';
-import { updateAssetsWithKis } from './services/kisService';
+import { updateAssetsWithKis, getLastKisDebugLog, KisDebugLog } from './services/kisService';
 import { loadUserData, saveUserData, loadFromLegacyBin } from './services/storageService';
 import { triggerHaptic } from './utils/mobile';
 
@@ -187,6 +187,8 @@ const AppContent: React.FC = () => {
   
   const [isLegacyMigrationOpen, setIsLegacyMigrationOpen] = useState(false);
   const [isLocalDataOpen, setIsLocalDataOpen] = useState(false);
+  const [kisDebugLog, setKisDebugLog] = useState<KisDebugLog | null>(null);
+  const [isKisDebugOpen, setIsKisDebugOpen] = useState(false);
   
   const [inputSupaUrl, setInputSupaUrl] = useState('');
   const [inputSupaKey, setInputSupaKey] = useState('');
@@ -212,7 +214,9 @@ const AppContent: React.FC = () => {
   const [marketBriefing, setMarketBriefing] = useState<{content: string, timestamp: number} | undefined>(() => {
     try {
       const saved = localStorage.getItem('portflow_market_briefing');
-      return saved ? JSON.parse(saved) : undefined;
+      if (!saved) return undefined;
+      const parsed: any = JSON.parse(saved);
+      return (parsed && typeof parsed.content === 'string' && parsed.content.trim().length > 0) ? parsed : undefined;
     } catch (e) { return undefined; }
   });
 
@@ -239,10 +243,61 @@ const AppContent: React.FC = () => {
     if (Array.isArray(data.accounts)) setAccounts([...data.accounts]);
     if (Array.isArray(data.history)) setHistory([...data.history]);
     if (Array.isArray(data.savedStrategies)) setSavedStrategies(data.savedStrategies);
-    if (data.user) setUser({ ...data.user });
+    if (data.user) {
+      setUser({ ...data.user });
+      if (data.user.kisConfig?.appKey || data.user.kisConfig?.appSecret) {
+        setKisConfig(prev => ({
+          ...prev,
+          appKey: data.user!.kisConfig!.appKey || prev.appKey,
+          appSecret: data.user!.kisConfig!.appSecret || prev.appSecret,
+          useKis: !!(data.user!.kisConfig!.appKey && data.user!.kisConfig!.appSecret)
+        }));
+      }
+    }
     if (data.lastUpdated) setLastUpdated(data.lastUpdated);
     if (data.exchangeRate) setDynamicExchangeRate(data.exchangeRate);
-    if (data.marketBriefing) setMarketBriefing(data.marketBriefing);
+    if (data.marketBriefing) {
+      let mb: any = data.marketBriefing;
+      
+      // Handle case where marketBriefing is stored as a stringified JSON string
+      if (typeof mb === 'string') {
+        try {
+          mb = JSON.parse(mb);
+        } catch (e) {
+          console.warn("Failed to parse marketBriefing string:", e);
+        }
+      }
+
+      // Handle case where marketBriefing is stored as an array-like object (e.g. {"0":"{", "1":"\"" ...})
+      if (mb && typeof mb === 'object' && !mb.content && !mb.timestamp) {
+        const keys = Object.keys(mb);
+        if (keys.length > 0 && keys.every(k => !isNaN(Number(k)))) {
+          try {
+            const str = Object.values(mb).join('');
+            const parsed = JSON.parse(str);
+            if (parsed && (parsed.content || parsed.timestamp)) {
+              mb = parsed;
+            }
+          } catch (e) {
+            console.warn("Failed to reconstruct marketBriefing from array-like object:", e);
+          }
+        }
+      }
+
+      // Ensure timestamp is a number
+      const timestamp = typeof mb.timestamp === 'string' 
+        ? new Date(mb.timestamp).getTime() 
+        : (typeof mb.timestamp === 'number' ? mb.timestamp : Date.now());
+      
+      const validTimestamp = isNaN(timestamp) ? Date.now() : timestamp;
+      
+      if (mb && typeof mb === 'object' && typeof mb.content === 'string' && mb.content.trim().length > 0) {
+        setMarketBriefing({ 
+          content: mb.content, 
+          timestamp: validTimestamp 
+        });
+      }
+    }
     
     const dbTimestamp = data.timestamp || Date.now();
     setLocalUpdateTimestamp(dbTimestamp);
@@ -566,7 +621,14 @@ const AppContent: React.FC = () => {
 
           if (kisEligible.length > 0) {
             setPriceUpdateStatus({ api: '한국투자증권 API', current: 0, total: kisEligible.length });
-            const kisResult = await updateAssetsWithKis(kisEligible, kisConfig, (c, t) => setPriceUpdateStatus({ api: '한국투자증권 API', current: c, total: t }));
+            const kisResult = await updateAssetsWithKis(
+              kisEligible, 
+              kisConfig, 
+              (c, t) => setPriceUpdateStatus({ api: '한국투자증권 API', current: c, total: t }),
+              syncConfig.supabaseUrl,
+              syncConfig.supabaseKey,
+              user?.id
+            );
             
             kisResult.updatedAssets.forEach(ka => {
               const idx = updatedAssets.findIndex(a => a.id === ka.id);
@@ -585,16 +647,17 @@ const AppContent: React.FC = () => {
             });
             if (geminiResult.exchangeRate) newRate = geminiResult.exchangeRate;
             fetchedItemsCount += geminiResult.fetchedCount;
-            successMsg += kisEligible.length > 0 ? ` + AI 갱신(${fetchedItemsCount}종목)` : `AI 갱신 완료 (${fetchedItemsCount}종목 조회)`;
+            successMsg += kisEligible.length > 0 ? ` + AI 갱신(${fetchedItemsCount}종목)` : `AI 갱신 완료 (${fetchedItemsCount}종목 갱신)`;
           }
-        } catch (e) {
+        } catch (e: any) {
           console.error("KIS Update failed, falling back to Gemini entirely", e);
+          showToast(`KIS API 오류: ${e.message}`);
           setPriceUpdateStatus({ api: 'Gemini AI API', current: 0, total: assets.filter(a => a.type !== AssetType.CASH).length });
           const geminiResult = await updateAssetPrices(assets, (c, t) => setPriceUpdateStatus({ api: 'Gemini AI API', current: c, total: t }));
           updatedAssets = geminiResult.updatedAssets;
           if (geminiResult.exchangeRate) newRate = geminiResult.exchangeRate;
           fetchedItemsCount = geminiResult.fetchedCount;
-          successMsg = `AI 갱신 완료 (${fetchedItemsCount}종목 조회)`;
+          successMsg = `AI 갱신 완료 (${fetchedItemsCount}종목 갱신)`;
         }
       } else {
         setPriceUpdateStatus({ api: 'Gemini AI API', current: 0, total: assets.filter(a => a.type !== AssetType.CASH).length });
@@ -602,7 +665,7 @@ const AppContent: React.FC = () => {
         updatedAssets = result.updatedAssets;
         if (result.exchangeRate) newRate = result.exchangeRate;
         fetchedItemsCount = result.fetchedCount;
-        successMsg = `AI 시세 갱신 완료 (${fetchedItemsCount}종목 조회)`;
+        successMsg = `AI 시세 갱신 완료 (${fetchedItemsCount}종목 갱신)`;
       }
       
       const newLastUpdated = new Date().toLocaleString();
@@ -645,6 +708,7 @@ const AppContent: React.FC = () => {
       handleSync('FORCE_PUSH', latestAppData);
 
       const reportMsg = `${successMsg} | 반영: ${updatedAssets.length}건 | 환율: ${newRate.toLocaleString()}원`;
+      setKisDebugLog(getLastKisDebugLog());
       showToast(reportMsg);
     } catch (e: any) { 
       showToast(`오류: ${e.message}`); 
@@ -783,6 +847,57 @@ const AppContent: React.FC = () => {
               <section className="space-y-2">
                 <button onClick={() => setIsLegacyMigrationOpen(!isLegacyMigrationOpen)} className="w-full flex items-center justify-between px-1"><h4 className="text-[11px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2"><FileJson size={14} className="text-amber-500" /> Legacy Migration (JSONBin)</h4>{isLegacyMigrationOpen ? <ChevronUp size={14} className="text-slate-300"/> : <ChevronDown size={14} className="text-slate-300"/>}</button>
                 {isLegacyMigrationOpen && <div className="bg-amber-50 p-5 rounded-[2rem] border border-amber-100 space-y-3 animate-in slide-in-from-top-2"><p className="text-[9px] font-bold text-amber-700">이전 데이터를 LocalStorage로 내립니다. 이후 'Supabase 올리기'를 실행하세요.</p><input type="text" placeholder="Bin ID" value={inputLegacyBinId} onChange={e => setInputLegacyBinId(e.target.value)} className="w-full px-4 py-3 bg-white border border-amber-200 rounded-xl text-xs font-bold outline-none focus:border-amber-500" /><input type="password" placeholder="API Key" value={inputLegacyApiKey} onChange={e => setInputLegacyApiKey(e.target.value)} className="w-full px-4 py-3 bg-white border border-amber-200 rounded-xl text-xs font-bold outline-none focus:border-amber-500" /><button onClick={handleLegacyPull} disabled={isSyncing} className="w-full py-3 bg-white border border-amber-200 text-amber-600 rounded-xl text-[10px] font-black">JSONBin 데이터 내리기</button></div>}
+              </section>
+
+              <section className="space-y-2">
+                <button onClick={() => { setIsKisDebugOpen(!isKisDebugOpen); setKisDebugLog(getLastKisDebugLog()); }} className="w-full flex items-center justify-between px-1"><h4 className="text-[11px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2"><Zap size={14} className="text-amber-500" /> KIS API 디버그 로그</h4>{isKisDebugOpen ? <ChevronUp size={14} className="text-slate-300"/> : <ChevronDown size={14} className="text-slate-300"/>}</button>
+                {isKisDebugOpen && (
+                  <div className="bg-slate-900 p-4 rounded-2xl border border-slate-800 space-y-3 animate-in slide-in-from-top-2 overflow-hidden">
+                    <div className="flex items-center justify-between">
+                      <p className="text-[10px] font-black text-slate-500 uppercase">Last Request Info</p>
+                      <button onClick={() => setKisDebugLog(getLastKisDebugLog())} className="text-[9px] font-black text-indigo-400 hover:text-indigo-300">새로고침</button>
+                    </div>
+                    {kisDebugLog ? (
+                      <div className="space-y-3 text-[10px] font-mono">
+                        <div className="flex items-center justify-between">
+                          <span className={`px-2 py-0.5 rounded text-[9px] font-bold ${kisDebugLog.env === 'REAL' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-amber-500/20 text-amber-400'}`}>
+                            {kisDebugLog.env} ENVIRONMENT
+                          </span>
+                          <span className="text-slate-500">{new Date(kisDebugLog.timestamp).toLocaleTimeString()}</span>
+                        </div>
+                        <div className="space-y-1">
+                          <p className="text-emerald-400 font-bold">[{kisDebugLog.method}] URL</p>
+                          <div className="text-slate-300 break-all bg-slate-800/50 p-2 rounded-lg border border-slate-700/50">
+                            {kisDebugLog.url}
+                          </div>
+                          <p className="text-slate-400 mt-1">Status: <span className={kisDebugLog.status >= 400 ? 'text-rose-400' : 'text-emerald-400'}>{kisDebugLog.status}</span></p>
+                        </div>
+                        {Object.keys(kisDebugLog.queryParams).length > 0 && (
+                          <div className="space-y-1">
+                            <p className="text-indigo-400 font-bold">Query Parameters:</p>
+                            <pre className="text-slate-300 whitespace-pre-wrap break-all bg-slate-800/50 p-2 rounded-lg border border-slate-700/50">{JSON.stringify(kisDebugLog.queryParams, null, 2)}</pre>
+                          </div>
+                        )}
+                        <div className="space-y-1">
+                          <p className="text-indigo-400 font-bold">Headers:</p>
+                          <pre className="text-slate-300 whitespace-pre-wrap break-all bg-slate-800/50 p-2 rounded-lg border border-slate-700/50">{JSON.stringify(kisDebugLog.headers, null, 2)}</pre>
+                        </div>
+                        {kisDebugLog.body && (
+                          <div className="space-y-1">
+                            <p className="text-indigo-400 font-bold">Body:</p>
+                            <pre className="text-slate-300 whitespace-pre-wrap break-all bg-slate-800/50 p-2 rounded-lg border border-slate-700/50">{typeof kisDebugLog.body === 'string' ? kisDebugLog.body : JSON.stringify(kisDebugLog.body, null, 2)}</pre>
+                          </div>
+                        )}
+                        <div className="space-y-1">
+                          <p className="text-amber-400 font-bold">Response:</p>
+                          <pre className="text-slate-300 whitespace-pre-wrap break-all bg-slate-800/50 p-2 rounded-lg border border-slate-700/50 max-h-40 overflow-y-auto">{JSON.stringify(kisDebugLog.response, null, 2)}</pre>
+                        </div>
+                      </div>
+                    ) : (
+                      <p className="text-[10px] font-bold text-slate-600 italic py-4 text-center">로그가 없습니다. 시세 갱신을 실행하세요.</p>
+                    )}
+                  </div>
+                )}
               </section>
 
               <section className="space-y-2">
