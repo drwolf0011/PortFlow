@@ -16,6 +16,7 @@ interface TransactionHistoryProps {
 const TransactionHistory: React.FC<TransactionHistoryProps> = ({ transactions, accounts, onDelete, onEdit, onUpdate, onAdd, exchangeRate }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [filterAccountId, setFilterAccountId] = useState<string | null>(null);
+  const [filterAssetId, setFilterAssetId] = useState<string | null>(null);
   const [filterType, setFilterType] = useState<'ALL' | TransactionType>('ALL');
   const [activeHintLabel, setActiveHintLabel] = useState<string | null>(null);
   const [deletingTx, setDeletingTx] = useState<Transaction | null>(null);
@@ -24,32 +25,53 @@ const TransactionHistory: React.FC<TransactionHistoryProps> = ({ transactions, a
   useEffect(() => {
     const nameHint = sessionStorage.getItem('tx_filter_name');
     const accountHint = sessionStorage.getItem('tx_filter_account_id');
+    const assetHint = sessionStorage.getItem('tx_filter_asset_id');
     
-    if (nameHint) {
-      setSearchTerm(nameHint);
-      const acc = accounts.find(a => a.id === accountHint);
+    if (nameHint || assetHint) {
+      setSearchTerm(nameHint || '');
       setFilterAccountId(accountHint || null);
+      setFilterAssetId(assetHint || null);
       
       // 안내 문구 생성
-      const hintLabel = acc ? `[${acc.nickname}] ${nameHint}` : nameHint;
+      const acc = accounts.find(a => a.id === accountHint);
+      const hintLabel = acc ? `[${acc.nickname}] ${nameHint || '자산'}` : (nameHint || '선택 자산');
       setActiveHintLabel(hintLabel);
       
       // 일회성 필터링이므로 사용 후 즉시 제거
       sessionStorage.removeItem('tx_filter_name');
       sessionStorage.removeItem('tx_filter_account_id');
+      sessionStorage.removeItem('tx_filter_asset_id');
     }
   }, [accounts]);
 
   const filteredTransactions = useMemo(() => {
-    return transactions.filter(tx => {
-      const matchSearch = tx.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
-                          tx.institution.toLowerCase().includes(searchTerm.toLowerCase());
-      const matchType = filterType === 'ALL' || tx.type === filterType;
-      const matchAccount = !filterAccountId || tx.accountId === filterAccountId;
-      
-      return matchSearch && matchType && matchAccount;
-    });
-  }, [transactions, searchTerm, filterType, filterAccountId]);
+    return transactions
+      .filter(tx => {
+        const matchSearch = tx.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
+                            tx.institution.toLowerCase().includes(searchTerm.toLowerCase());
+        const matchType = filterType === 'ALL' || tx.type === filterType;
+        const matchAccount = !filterAccountId || tx.accountId === filterAccountId;
+        const matchAsset = !filterAssetId || tx.assetId === filterAssetId;
+        
+        return matchSearch && matchType && matchAccount && matchAsset;
+      })
+      .sort((a, b) => {
+        // 1. Sort by accountId
+        const accA = a.accountId || '';
+        const accB = b.accountId || '';
+        const accComp = accA.localeCompare(accB);
+        if (accComp !== 0) return accComp;
+
+        // 2. Sort by assetId
+        const assetA = a.assetId || '';
+        const assetB = b.assetId || '';
+        const assetComp = assetA.localeCompare(assetB);
+        if (assetComp !== 0) return assetComp;
+
+        // 3. Sort by date (descending - newest first)
+        return b.date.localeCompare(a.date);
+      });
+  }, [transactions, searchTerm, filterType, filterAccountId, filterAssetId]);
 
   const formatCurrency = (val: number, currency: string) => {
     if (currency === 'USD') return `$${val.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -83,6 +105,7 @@ const TransactionHistory: React.FC<TransactionHistoryProps> = ({ transactions, a
   const handleClearFilter = () => {
     setSearchTerm('');
     setFilterAccountId(null);
+    setFilterAssetId(null);
     setActiveHintLabel(null);
   };
 
@@ -151,9 +174,21 @@ const TransactionHistory: React.FC<TransactionHistoryProps> = ({ transactions, a
             </button>
             <button 
               onClick={() => setFilterType(TransactionType.SELL)}
-              className={`flex-1 py-2.5 rounded-xl text-xs font-black transition-all border ${filterType === TransactionType.SELL ? 'bg-blue-500 text-white border-blue-500 shadow-md' : 'bg-white text-slate-400 border-slate-200'}`}
+              className={`flex-1 py-2.5 rounded-xl text-[10px] font-black transition-all border ${filterType === TransactionType.SELL ? 'bg-blue-500 text-white border-blue-500 shadow-md' : 'bg-white text-slate-400 border-slate-200'}`}
             >
               매도
+            </button>
+            <button 
+              onClick={() => setFilterType(TransactionType.DEPOSIT)}
+              className={`flex-1 py-2.5 rounded-xl text-[10px] font-black transition-all border ${filterType === TransactionType.DEPOSIT ? 'bg-emerald-500 text-white border-emerald-500 shadow-md' : 'bg-white text-slate-400 border-slate-200'}`}
+            >
+              입금
+            </button>
+            <button 
+              onClick={() => setFilterType(TransactionType.WITHDRAW)}
+              className={`flex-1 py-2.5 rounded-xl text-[10px] font-black transition-all border ${filterType === TransactionType.WITHDRAW ? 'bg-amber-500 text-white border-amber-500 shadow-md' : 'bg-white text-slate-400 border-slate-200'}`}
+            >
+              출금
             </button>
           </div>
         </div>
@@ -163,16 +198,27 @@ const TransactionHistory: React.FC<TransactionHistoryProps> = ({ transactions, a
         {filteredTransactions.length > 0 ? (
           filteredTransactions.map((tx) => {
             const isBuy = tx.type === TransactionType.BUY;
+            const isSell = tx.type === TransactionType.SELL;
+            const isDeposit = tx.type === TransactionType.DEPOSIT;
+            const isWithdraw = tx.type === TransactionType.WITHDRAW;
+            
             const nickname = getAccountNickname(tx.accountId);
             const totalVal = tx.price * tx.quantity;
             const totalKRW = tx.currency === 'USD' ? totalVal * (tx.exchangeRate || exchangeRate) : totalVal;
+
+            const typeColor = isBuy ? 'bg-rose-50 text-rose-600' : 
+                             isSell ? 'bg-blue-50 text-blue-600' :
+                             isDeposit ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600';
+
+            const amountColor = isBuy || isWithdraw ? 'text-rose-500' : 'text-blue-500';
+            const amountPrefix = isBuy || isWithdraw ? '-' : '+';
 
             return (
               <div key={tx.id} className="bg-white p-5 rounded-[1.5rem] shadow-sm border border-slate-50 transition-all hover:shadow-md hover:border-indigo-100 relative group overflow-hidden">
                 <div className="flex justify-between items-start mb-3">
                   <div className="flex flex-col pr-20">
                     <div className="flex items-center gap-2 mb-1">
-                      <span className={`text-[9px] font-black px-2 py-0.5 rounded-full uppercase ${isBuy ? 'bg-rose-50 text-rose-600' : 'bg-blue-50 text-blue-600'}`}>
+                      <span className={`text-[9px] font-black px-2 py-0.5 rounded-full uppercase ${typeColor}`}>
                         {tx.type}
                       </span>
                       <span className="text-[10px] font-bold text-slate-300">{tx.date}</span>
@@ -225,8 +271,8 @@ const TransactionHistory: React.FC<TransactionHistoryProps> = ({ transactions, a
                 
                 <div className="mt-3 pt-3 border-t border-slate-50 flex items-center justify-between">
                   <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">원화 환산 합계</span>
-                  <p className={`text-sm font-black ${isBuy ? 'text-rose-500' : 'text-blue-500'}`}>
-                    {isBuy ? '+' : '-'}{Math.floor(totalKRW).toLocaleString()}원
+                  <p className={`text-sm font-black ${amountColor}`}>
+                    {amountPrefix}{Math.floor(totalKRW).toLocaleString()}원
                   </p>
                 </div>
               </div>

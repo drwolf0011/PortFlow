@@ -142,7 +142,9 @@ export const loadUserData = async (url: string, key: string, userId: string): Pr
     accountNumber: row.account_number,
     nickname: row.nickname,
     type: row.type,
-    isHidden: row.is_hidden
+    isHidden: row.is_hidden,
+    balance: row.balance ? parseFloat(row.balance) : 0,
+    balanceUSD: row.balance_usd ? parseFloat(row.balance_usd) : 0
   }));
 
   const assets: Asset[] = (assetsRes.data || []).map((row: any) => ({
@@ -158,7 +160,9 @@ export const loadUserData = async (url: string, key: string, userId: string): Pr
     purchasePriceKRW: row.purchase_price_krw ? parseFloat(row.purchase_price_krw) : undefined,
     currentPrice: parseFloat(row.current_price),
     currency: row.currency,
-    managementType: row.management_type
+    managementType: row.management_type,
+    realizedProfit: row.realized_profit ? parseFloat(row.realized_profit) : 0,
+    realizedProfitKRW: row.realized_profit_krw ? parseFloat(row.realized_profit_krw) : 0
   }));
 
   const transactions: Transaction[] = (txRes.data || []).map((row: any) => ({
@@ -245,7 +249,7 @@ export const saveUserData = async (url: string, key: string, data: AppData): Pro
   // 2. Sync Accounts (Delete missing, Upsert existing)
   const incomingAccountIds = data.accounts.map(a => a.id);
   if (incomingAccountIds.length > 0) {
-    await supabase.from('accounts').delete().eq('user_id', userId).not('id', 'in', `(${incomingAccountIds.join(',')})`);
+    await supabase.from('accounts').delete().eq('user_id', userId).not('id', 'in', incomingAccountIds);
     const { error } = await supabase.from('accounts').upsert(
       data.accounts.map(a => ({
         id: a.id,
@@ -255,6 +259,8 @@ export const saveUserData = async (url: string, key: string, data: AppData): Pro
         nickname: a.nickname,
         type: a.type,
         is_hidden: a.isHidden,
+        balance: a.balance || 0,
+        balance_usd: a.balanceUSD || 0,
         updated_at: syncTimestamp
       }))
     );
@@ -266,7 +272,7 @@ export const saveUserData = async (url: string, key: string, data: AppData): Pro
   // 3. Sync Assets (Delete missing, Upsert existing)
   const incomingAssetIds = data.assets.map(a => a.id);
   if (incomingAssetIds.length > 0) {
-    await supabase.from('assets').delete().eq('user_id', userId).not('id', 'in', `(${incomingAssetIds.join(',')})`);
+    await supabase.from('assets').delete().eq('user_id', userId).not('id', 'in', incomingAssetIds);
     const { error } = await supabase.from('assets').upsert(
       data.assets.map(a => ({
         id: a.id,
@@ -283,6 +289,8 @@ export const saveUserData = async (url: string, key: string, data: AppData): Pro
         current_price: a.currentPrice,
         currency: a.currency,
         management_type: a.managementType,
+        realized_profit: a.realizedProfit || 0,
+        realized_profit_krw: a.realizedProfitKRW || 0,
         updated_at: syncTimestamp
       }))
     );
@@ -294,7 +302,7 @@ export const saveUserData = async (url: string, key: string, data: AppData): Pro
   // 4. Sync Transactions (Delete missing, Upsert existing)
   const incomingTxIds = data.transactions.map(t => t.id);
   if (incomingTxIds.length > 0) {
-    await supabase.from('transactions').delete().eq('user_id', userId).not('id', 'in', `(${incomingTxIds.join(',')})`);
+    await supabase.from('transactions').delete().eq('user_id', userId).not('id', 'in', incomingTxIds);
     const { error } = await supabase.from('transactions').upsert(
       data.transactions.map(t => ({
         id: t.id,
@@ -338,7 +346,7 @@ export const saveUserData = async (url: string, key: string, data: AppData): Pro
   // 6. Sync Strategies
   const incomingStrategyIds = (data.savedStrategies || []).map(s => s.id);
   if (incomingStrategyIds.length > 0) {
-    await supabase.from('saved_strategies').delete().eq('user_id', userId).not('id', 'in', `(${incomingStrategyIds.join(',')})`);
+    await supabase.from('saved_strategies').delete().eq('user_id', userId).not('id', 'in', incomingStrategyIds);
     const { error } = await supabase.from('saved_strategies').upsert(
       data.savedStrategies!.map(s => ({
         id: s.id,

@@ -4,7 +4,7 @@ import { Asset, AssetType, Account, AccountType } from '../types';
 import { 
   Filter, Trash2, Edit3, Plus, RefreshCw, AlertCircle, 
   Globe, CreditCard, History, RotateCcw, Landmark, 
-  ChevronDown, X, Check, Calculator, TrendingUp, ArrowDownRight, Tag
+  ChevronDown, X, Check, Calculator, TrendingUp, ArrowDownRight, Tag, Trophy
 } from 'lucide-react';
 /* Fix: Using wildcard import for react-router-dom to resolve named export errors */
 import * as ReactRouterDOM from 'react-router-dom';
@@ -84,6 +84,14 @@ const AssetList: React.FC<AssetListProps> = ({
   const [activeType, setActiveType] = useState<string>('ALL');
   const [selectedAccountId, setSelectedAccountId] = useState<string>('ALL');
   const [isAccountSheetOpen, setIsAccountSheetOpen] = useState(false);
+
+  const sortedAccounts = useMemo(() => {
+    return [...accounts].sort((a, b) => {
+      const instCompare = a.institution.localeCompare(b.institution);
+      if (instCompare !== 0) return instCompare;
+      return a.accountNumber.localeCompare(b.accountNumber);
+    });
+  }, [accounts]);
   
   const filtered = useMemo(() => {
     // 1. 숨긴 계좌 ID 집합 생성
@@ -130,6 +138,11 @@ const AssetList: React.FC<AssetListProps> = ({
         const nicknameB = accB?.nickname || '';
         const accComp = nicknameA.localeCompare(nicknameB, 'ko-KR');
         if (accComp !== 0) return accComp;
+
+        // 거래통화 정렬 (KRW > USD)
+        if (a.currency !== b.currency) {
+          return a.currency === 'KRW' ? -1 : 1;
+        }
 
         const valA = (a.currentPrice || 0) * (a.quantity || 0) * (a.currency === 'USD' ? exchangeRate : 1);
         const valB = (b.currentPrice || 0) * (b.quantity || 0) * (b.currency === 'USD' ? exchangeRate : 1);
@@ -323,17 +336,28 @@ const AssetList: React.FC<AssetListProps> = ({
                     </div>
                   </div>
                   <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-all">
-                    <button onClick={() => onEditAsset(asset)} className="p-2 text-slate-300 hover:text-indigo-600"><Edit3 size={18} /></button>
-                    <button onClick={() => onDeleteAsset(asset.id)} className="p-2 text-slate-300 hover:text-rose-500"><Trash2 size={18} /></button>
+                    {asset.type !== AssetType.CASH && (
+                      <>
+                        <button onClick={() => onEditAsset(asset)} className="p-2 text-slate-300 hover:text-indigo-600"><Edit3 size={18} /></button>
+                        <button onClick={() => onDeleteAsset(asset.id)} className="p-2 text-slate-300 hover:text-rose-500"><Trash2 size={18} /></button>
+                      </>
+                    )}
                   </div>
                 </div>
                 
                 <div className="grid grid-cols-2 gap-4 pt-4 border-t border-slate-50">
                   <div>
-                    <p className="text-[10px] font-bold text-slate-400 mb-1">평가금액 ({(asset.quantity || 0).toLocaleString()}주)</p>
+                    <p className="text-[10px] font-bold text-slate-400 mb-1">
+                      {asset.type === AssetType.CASH ? '보유 금액' : `평가금액 (${(asset.quantity || 0).toLocaleString()}주)`}
+                    </p>
                     <p className="text-xl font-black text-slate-900 tracking-tight">{Math.floor(totalValKRW).toLocaleString()}<span className="text-xs ml-0.5">원</span></p>
                     <p className="text-[11px] font-bold text-slate-600 mt-0.5">
-                      @{asset.currency === 'KRW' ? Math.floor(asset.currentPrice).toLocaleString() : asset.currentPrice.toLocaleString(undefined, {minimumFractionDigits: 2})} <span className="text-[9px] text-slate-400">{asset.currency}</span>
+                      {asset.type === AssetType.CASH ? (
+                        asset.currency === 'USD' ? `현재 환율 적용: 1 USD = ${exchangeRate.toLocaleString()}원` : '원화 현금 자산'
+                      ) : (
+                        `@${asset.currency === 'KRW' ? Math.floor(asset.currentPrice).toLocaleString() : asset.currentPrice.toLocaleString(undefined, {minimumFractionDigits: 2})} `
+                      )} 
+                      {asset.type !== AssetType.CASH && <span className="text-[9px] text-slate-400">{asset.currency}</span>}
                     </p>
                   </div>
                   <div className="text-right">
@@ -347,6 +371,19 @@ const AssetList: React.FC<AssetListProps> = ({
                   </div>
                 </div>
 
+                {/* 실현 손익 표시 추가 */}
+                {(asset.realizedProfit !== 0) && (
+                  <div className="mt-3 p-3 bg-slate-50 rounded-xl flex items-center justify-between border border-slate-100">
+                    <div className="flex items-center gap-2">
+                      <Trophy size={14} className="text-emerald-500" />
+                      <span className="text-[10px] font-black text-slate-500 uppercase">누적 실현 손익</span>
+                    </div>
+                    <span className={`text-xs font-black ${asset.realizedProfitKRW! >= 0 ? 'text-emerald-600' : 'text-amber-600'}`}>
+                      {asset.realizedProfitKRW! >= 0 ? '+' : ''}{Math.floor(asset.realizedProfitKRW!).toLocaleString()}원
+                    </span>
+                  </div>
+                )}
+
                 <div className="mt-4 pt-3 border-t border-slate-50 flex items-center justify-between">
                   <div className="flex items-center gap-1.5 text-[9px] font-bold text-slate-300 uppercase tracking-tight">
                     <Tag size={10} className="text-indigo-400" />
@@ -358,6 +395,7 @@ const AssetList: React.FC<AssetListProps> = ({
                     onClick={() => {
                       sessionStorage.setItem('tx_filter_name', asset.name);
                       sessionStorage.setItem('tx_filter_account_id', asset.accountId || '');
+                      sessionStorage.setItem('tx_filter_asset_id', asset.id);
                     }}
                   >
                     <History size={12} /> 거래 내역
@@ -397,10 +435,10 @@ const AssetList: React.FC<AssetListProps> = ({
                   label="전체 계좌 보기"
                 />
                 
-                {accounts.filter(a => !a.isHidden).length > 0 && (
+                {sortedAccounts.filter(a => !a.isHidden).length > 0 && (
                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-2 pt-2">활성 계좌</p>
                 )}
-                {accounts.filter(a => !a.isHidden).map(acc => (
+                {sortedAccounts.filter(a => !a.isHidden).map(acc => (
                   <AccountListItem 
                     key={acc.id}
                     active={selectedAccountId === acc.id} 
@@ -409,10 +447,10 @@ const AssetList: React.FC<AssetListProps> = ({
                   />
                 ))}
 
-                {accounts.filter(a => a.isHidden).length > 0 && (
+                {sortedAccounts.filter(a => a.isHidden).length > 0 && (
                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-2 pt-2">숨긴 계좌</p>
                 )}
-                {accounts.filter(a => a.isHidden).map(acc => (
+                {sortedAccounts.filter(a => a.isHidden).map(acc => (
                   <AccountListItem 
                     key={acc.id}
                     active={selectedAccountId === acc.id} 

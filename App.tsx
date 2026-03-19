@@ -237,10 +237,13 @@ const AppContent: React.FC = () => {
   const applyAppData = useCallback((data: AppData) => {
     if (!data) return;
     const incomingTxs = Array.isArray(data.transactions) ? data.transactions : [];
-    const syncedAssets = recalculateAssets(incomingTxs, Array.isArray(data.assets) ? data.assets : []);
+    const incomingAccounts = Array.isArray(data.accounts) ? data.accounts : [];
+    const updatedAccounts = recalculateBalances(incomingTxs, incomingAccounts);
+    const syncedAssets = recalculateAssets(incomingTxs, Array.isArray(data.assets) ? data.assets : [], updatedAccounts);
+    
     setTransactions(incomingTxs);
     setAssets(syncedAssets);
-    if (Array.isArray(data.accounts)) setAccounts([...data.accounts]);
+    if (updatedAccounts.length > 0) setAccounts(updatedAccounts);
     if (Array.isArray(data.history)) setHistory([...data.history]);
     if (Array.isArray(data.savedStrategies)) setSavedStrategies(data.savedStrategies);
     if (data.user) {
@@ -399,10 +402,77 @@ const AppContent: React.FC = () => {
   useEffect(() => { localStorage.setItem('portflow_exchange_rate', dynamicExchangeRate.toString()); }, [dynamicExchangeRate]);
   useEffect(() => { localStorage.setItem('portflow_last_updated', lastUpdated); }, [lastUpdated]);
 
-  const recalculateAssets = useCallback((txs: Transaction[], currentAssets: Asset[]) => {
+  const recalculateBalances = useCallback((txs: Transaction[], currentAccounts: Account[]) => {
+    const accountBalances: Record<string, { KRW: number; USD: number }> = {};
+    
+    // 1. 기초 잔액으로 초기화
+    currentAccounts.forEach(acc => {
+      accountBalances[acc.id] = { 
+        KRW: acc.initialBalance || 0, 
+        USD: acc.initialBalanceUSD || 0 
+      };
+    });
+
+    const sortedTxs = [...txs].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+    
+    // 2. 거래 내역 반영
+    sortedTxs.forEach(tx => {
+      if (!tx.accountId) return;
+      if (accountBalances[tx.accountId] === undefined) accountBalances[tx.accountId] = { KRW: 0, USD: 0 };
+      
+      const amount = tx.quantity * tx.price;
+      const curr = tx.currency === 'USD' ? 'USD' : 'KRW';
+      
+      if (tx.type === TransactionType.BUY) {
+        accountBalances[tx.accountId][curr] -= amount;
+      } else if (tx.type === TransactionType.SELL) {
+        accountBalances[tx.accountId][curr] += amount;
+      } else if (tx.type === TransactionType.DEPOSIT) {
+        accountBalances[tx.accountId][curr] += amount;
+      } else if (tx.type === TransactionType.WITHDRAW) {
+        accountBalances[tx.accountId][curr] -= amount;
+      }
+    });
+
+    // 3. 방법 C: 마이너스 잔고 방어 (보유 자산의 매수 금액만큼 최소 기초 잔액 보정)
+    // 최종 잔고가 마이너스면 그만큼 기초 잔액을 더해주는 방식으로 구현 (가장 보수적인 보정)
+    return currentAccounts.map(acc => {
+      let finalKRW = accountBalances[acc.id]?.KRW || 0;
+      let finalUSD = accountBalances[acc.id]?.USD || 0;
+      
+      let initialKRW = acc.initialBalance || 0;
+      let initialUSD = acc.initialBalanceUSD || 0;
+
+      if (finalKRW < 0) {
+        initialKRW += Math.abs(finalKRW);
+        finalKRW = 0;
+      }
+      if (finalUSD < 0) {
+        initialUSD += Math.abs(finalUSD);
+        finalUSD = 0;
+      }
+      
+      return {
+        ...acc,
+        initialBalance: initialKRW,
+        initialBalanceUSD: initialUSD,
+        balance: finalKRW,
+        balanceUSD: finalUSD
+      };
+    });
+  }, []);
+
+  const recalculateAssets = useCallback((txs: Transaction[], currentAssets: Asset[], updatedAccounts: Account[]) => {
     const groups: Record<string, Transaction[]> = {};
-    txs.forEach(t => {
-      const key = t.assetId || `${t.name}|${t.institution}|${t.accountId || 'none'}`;
+    // 모든 거래 내역을 그룹화 (현금 제외)
+    const assetTxs = txs.filter(t => t.assetType !== AssetType.CASH);
+    
+    assetTxs.forEach(t => {
+      let key = t.assetId;
+      if (!key) {
+        key = `${t.name}|${t.institution}|${t.accountId || 'none'}`;
+      }
+      
       if (!groups[key]) groups[key] = [];
       groups[key].push(t);
     });
@@ -410,13 +480,18 @@ const AppContent: React.FC = () => {
     const assetMetaMap: Record<string, Asset> = {};
     currentAssets.forEach(a => {
       assetMetaMap[a.id] = a;
-      assetMetaMap[`${a.name}|${a.institution}|${a.accountId || 'none'}`] = a;
+      if (a.type !== AssetType.CASH) {
+        assetMetaMap[`${a.name}|${a.institution}|${a.accountId || 'none'}`] = a;
+      }
     });
 
     const newAssets: Asset[] = [];
+    
+    // 1. 일반 자산 처리
     Object.entries(groups).forEach(([key, groupTxs]) => {
       const meta = assetMetaMap[key]; 
       let totalQty = 0, totalCostKRW = 0, totalCostUSD = 0; 
+      let realizedProfit = 0, realizedProfitKRW = 0;
       const sortedTxs = [...groupTxs].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
       
       const firstTx = sortedTxs[0];
@@ -425,25 +500,29 @@ const AppContent: React.FC = () => {
 
       sortedTxs.forEach(tx => {
         const effectiveRate = tx.currency === 'USD' ? (tx.exchangeRate || dynamicExchangeRate) : 1;
-        if (tx.type === TransactionType.BUY) {
+        if (tx.type === TransactionType.BUY || tx.type === TransactionType.DEPOSIT) {
           totalCostKRW += (tx.quantity * tx.price * effectiveRate);
           totalCostUSD += (tx.quantity * tx.price);
           totalQty += tx.quantity;
-        } else if (tx.type === TransactionType.SELL) {
+        } else if (tx.type === TransactionType.SELL || tx.type === TransactionType.WITHDRAW) {
           const avgKRW = totalQty > 0 ? totalCostKRW / totalQty : 0;
           const avgUSD = totalQty > 0 ? totalCostUSD / totalQty : 0;
+          
+          const profitUSD = (tx.price - avgUSD) * tx.quantity;
+          const profitKRW = (tx.price * effectiveRate - avgKRW) * tx.quantity;
+          
+          realizedProfit += profitUSD;
+          realizedProfitKRW += profitKRW;
+
           totalQty = Math.max(0, totalQty - tx.quantity);
           totalCostKRW = totalQty * avgKRW; 
           totalCostUSD = totalQty * avgUSD;
         }
       });
 
-      if (totalQty > 0) {
-        // ID 생성 로직 개선: 기존 메타데이터 ID가 있으면 사용, 없으면 랜덤 ID 생성 (이름 사용 X)
-        // 기존 로직에서 key가 이름|기관|계좌 조합일 경우, 이를 ID로 사용하는 문제가 있었음.
+      if (totalQty > 0 || realizedProfit !== 0) {
         const newId = meta?.id || Math.random().toString(36).substr(2, 9);
         
-        // [Bug Fix] 트랜잭션에 자산 ID가 없는 경우(신규 등록 등) 생성된/찾은 자산 ID를 주입하여 DB 저장 시 누락 방지
         sortedTxs.forEach(tx => {
            if (!tx.assetId) tx.assetId = newId;
         });
@@ -456,46 +535,91 @@ const AppContent: React.FC = () => {
           exchange: meta?.exchange || firstTx.exchange, 
           type: meta?.type || firstTx.assetType, 
           quantity: totalQty,
-          purchasePrice: totalCostUSD / totalQty, 
-          purchasePriceKRW: totalCostKRW / totalQty,
+          purchasePrice: totalQty > 0 ? totalCostUSD / totalQty : 0, 
+          purchasePriceKRW: totalQty > 0 ? totalCostKRW / totalQty : 0,
           currentPrice: meta?.currentPrice || sortedTxs[sortedTxs.length - 1].price, 
           currency: firstTx.currency,
           accountId: accId || undefined, 
-          managementType: linkedAccount?.type || meta?.managementType || firstTx.managementType || AccountType.GENERAL
+          managementType: linkedAccount?.type || meta?.managementType || firstTx.managementType || AccountType.GENERAL,
+          realizedProfit,
+          realizedProfitKRW
         });
       }
     });
+
+    // 2. 현금 자산 추가 (계좌 잔액 기반)
+    updatedAccounts.forEach(acc => {
+      if (acc.balance > 0) {
+        newAssets.push({
+          id: `CASH-${acc.id}-KRW`,
+          name: '현금',
+          institution: acc.institution,
+          type: AssetType.CASH,
+          quantity: acc.balance,
+          purchasePrice: 1,
+          purchasePriceKRW: 1,
+          currentPrice: 1,
+          currency: 'KRW',
+          accountId: acc.id,
+          managementType: acc.type,
+          realizedProfit: 0,
+          realizedProfitKRW: 0
+        });
+      }
+      if (acc.balanceUSD > 0) {
+        newAssets.push({
+          id: `CASH-${acc.id}-USD`,
+          name: '현금',
+          institution: acc.institution,
+          type: AssetType.CASH,
+          quantity: acc.balanceUSD,
+          purchasePrice: 1,
+          purchasePriceKRW: dynamicExchangeRate,
+          currentPrice: 1,
+          currency: 'USD',
+          accountId: acc.id,
+          managementType: acc.type,
+          realizedProfit: 0,
+          realizedProfitKRW: 0
+        });
+      }
+    });
+
     return newAssets;
   }, [dynamicExchangeRate, accounts]);
+
 
   /**
    * 거래 변경 시 상태를 업데이트하고 즉시 클라우드로 전송합니다.
    */
-  const performDataUpdateAndSync = useCallback(async (newTxs: Transaction[]) => {
-    const newAssets = recalculateAssets(newTxs, assets);
+  const performDataUpdateAndSync = useCallback(async (newTxs: Transaction[], currentAssets?: Asset[]) => {
+    console.log("performDataUpdateAndSync called", { newTxsCount: newTxs.length, assetsProvided: !!currentAssets });
+    const assetsToUse = currentAssets || assets;
+    const newAccounts = recalculateBalances(newTxs, accounts);
+    const newAssets = recalculateAssets(newTxs, assetsToUse, newAccounts);
     const now = Date.now();
     
-    // 로컬 상태 즉시 반영
-    setTransactions(newTxs);
-    setAssets(newAssets);
-    setLocalUpdateTimestamp(now);
+    console.log("Recalculated data", { newAssetsCount: newAssets.length, newAccountsCount: newAccounts.length });
     
     // 현재 총 자산 가치 재계산 (히스토리 업데이트용)
     const totalValue = newAssets.reduce((acc, a) => {
       const mult = a.currency === 'USD' ? dynamicExchangeRate : 1;
       return acc + (a.currentPrice * a.quantity * mult);
+    }, 0) + newAccounts.reduce((acc, a) => {
+      const krw = a.balance || 0;
+      const usd = (a.balanceUSD || 0) * dynamicExchangeRate;
+      return acc + krw + usd;
     }, 0);
     
     const todayStr = new Date().toLocaleDateString('en-CA');
     const newHistory = [...history].filter(h => h.date !== todayStr);
     newHistory.push({ date: todayStr, value: totalValue, exchangeRate: dynamicExchangeRate });
-    setHistory(newHistory);
 
-    // 즉시 클라우드 반영
+    // 동기화할 데이터 준비
     const appDataToSync: AppData = {
       assets: newAssets,
       transactions: newTxs,
-      accounts,
+      accounts: newAccounts,
       user,
       history: newHistory,
       lastUpdated: new Date().toLocaleString(),
@@ -504,9 +628,69 @@ const AppContent: React.FC = () => {
       savedStrategies,
       marketBriefing
     };
-    
-    await handleSync('FORCE_PUSH', appDataToSync);
-  }, [assets, history, accounts, user, dynamicExchangeRate, savedStrategies, marketBriefing, handleSync, recalculateAssets]);
+
+    try {
+      // 1. 클라우드 먼저 시도 (실패 시 로컬 반영 안 함)
+      await handleSync('FORCE_PUSH', appDataToSync);
+      
+      // 2. 성공 시 로컬 상태 반영
+      setTransactions(newTxs);
+      setAssets(newAssets);
+      setAccounts(newAccounts);
+      setHistory(newHistory);
+      setLocalUpdateTimestamp(now);
+      
+      // 로컬 스토리지 백업
+      localStorage.setItem('portflow_transactions', JSON.stringify(newTxs));
+      localStorage.setItem('portflow_assets', JSON.stringify(newAssets));
+      localStorage.setItem('portflow_accounts', JSON.stringify(newAccounts));
+      localStorage.setItem('portflow_history', JSON.stringify(newHistory));
+    } catch (error) {
+      console.error("Data Sync Failed:", error);
+      showToast("데이터 저장에 실패했습니다. 네트워크를 확인해주세요.");
+      // 로컬 상태를 업데이트하지 않음으로써 데이터 불일치 방지
+    }
+  }, [assets, history, accounts, user, dynamicExchangeRate, savedStrategies, marketBriefing, handleSync, recalculateAssets, recalculateBalances]);
+
+  const handleAccountBalanceAdjustment = useCallback(async (accountId: string, targetBalance: number, currency: 'KRW' | 'USD') => {
+    console.log("handleAccountBalanceAdjustment called in App.tsx", { accountId, targetBalance, currency });
+    const account = accounts.find(a => a.id === accountId);
+    if (!account) {
+      console.warn("Account not found in App.tsx", accountId);
+      return;
+    }
+
+    const currentBalance = currency === 'USD' ? (account.balanceUSD || 0) : (account.balance || 0);
+    const diff = targetBalance - currentBalance;
+    console.log("Adjustment calculation in App.tsx", { currentBalance, targetBalance, diff });
+    if (Math.abs(diff) < 0.01) {
+      console.log("Diff too small, returning");
+      return;
+    }
+
+    // 보정 거래(Transaction) 생성 (FK: accountId)
+    const adjustmentTx: Transaction = {
+      id: `adj-${Date.now()}`,
+      accountId: accountId,
+      assetId: `CASH-${accountId}-${currency}`,
+      managementType: account.type,
+      date: new Date().toLocaleDateString('en-CA'),
+      type: diff > 0 ? TransactionType.DEPOSIT : TransactionType.WITHDRAW,
+      assetType: AssetType.CASH,
+      institution: account.institution,
+      name: '현금 (잔액 보정)',
+      quantity: Math.abs(diff),
+      price: 1,
+      currency: currency,
+      exchangeRate: currency === 'USD' ? dynamicExchangeRate : 1,
+    };
+
+    const newTransactions = [adjustmentTx, ...transactions];
+
+    // 원장 통합 업데이트 및 동기화
+    await performDataUpdateAndSync(newTransactions);
+    showToast(`${account.nickname} 계좌의 ${currency} 잔액이 보정되었습니다.`);
+  }, [accounts, transactions, dynamicExchangeRate, performDataUpdateAndSync]);
 
   const handleUpdateBriefing = useCallback(async (briefing: { content: string, timestamp: number }) => {
     setMarketBriefing(briefing);
@@ -530,9 +714,42 @@ const AppContent: React.FC = () => {
     await handleSync('FORCE_PUSH', appDataToSync);
   }, [assets, transactions, accounts, user, history, lastUpdated, dynamicExchangeRate, savedStrategies, handleSync]);
 
-  const handleSaveTransaction = (tx: Transaction) => {
+  const handleSaveTransaction = async (tx: Transaction) => {
+    let currentAssets = [...assets];
+    
+    // 1. 현금 거래(입금/출금)인 경우 현금 자산 존재 여부 확인 및 생성
+    if (tx.type === TransactionType.DEPOSIT || tx.type === TransactionType.WITHDRAW) {
+      let cashAsset = currentAssets.find(a => 
+        a.type === AssetType.CASH && 
+        a.accountId === tx.accountId && 
+        a.currency === tx.currency
+      );
+
+      if (!cashAsset) {
+        const acc = accounts.find(a => a.id === tx.accountId);
+        const newCashAsset: Asset = {
+          id: `cash-${tx.currency}-${tx.accountId}-${Date.now()}`,
+          name: '현금',
+          ticker: tx.currency === 'USD' ? 'USD' : 'KRW',
+          type: AssetType.CASH,
+          institution: tx.institution || acc?.institution || '기타',
+          accountId: tx.accountId,
+          managementType: tx.managementType || acc?.type || AccountType.GENERAL,
+          currency: tx.currency,
+          purchasePrice: 1,
+          purchasePriceKRW: tx.currency === 'USD' ? dynamicExchangeRate : 1,
+          currentPrice: 1,
+          quantity: 0,
+        };
+        currentAssets = [...currentAssets, newCashAsset];
+        tx.assetId = newCashAsset.id;
+      } else {
+        tx.assetId = cashAsset.id;
+      }
+    }
+
     if (!tx.assetId) {
-      const existingAsset = assets.find(a => 
+      const existingAsset = currentAssets.find(a => 
         a.name === tx.name && 
         a.institution === tx.institution && 
         a.accountId === tx.accountId
@@ -547,7 +764,7 @@ const AppContent: React.FC = () => {
     const exists = transactions.find(t => t.id === tx.id);
     const nextTxs = exists ? transactions.map(t => t.id === tx.id ? tx : t) : [...transactions, tx];
     
-    performDataUpdateAndSync(nextTxs);
+    performDataUpdateAndSync(nextTxs, currentAssets);
     setIsTransactionModalOpen(false); 
     setEditingTransaction(undefined); 
     showToast("거래 내역이 저장 및 동기화되었습니다.");
@@ -791,7 +1008,7 @@ const AppContent: React.FC = () => {
           <Route path="/advisor" element={<AIAdvisor assets={assets} accounts={accounts} onApplyRebalancing={() => {}} exchangeRate={dynamicExchangeRate} user={user} onUpdateUser={setUser} savedStrategies={savedStrategies} onSaveStrategy={handleSaveAIStrategy} onDeleteStrategy={handleDeleteAIStrategy} showToast={showToast} />} />
           <Route path="/history" element={<TransactionHistory transactions={transactions} accounts={accounts} onDelete={handleDeleteTransaction} onEdit={(tx) => { setEditingTransaction(tx); setIsTransactionModalOpen(true); }} onUpdate={performDataUpdateAndSync} onAdd={() => setIsTransactionModalOpen(true)} exchangeRate={dynamicExchangeRate} />} />
           <Route path="/analytics" element={<AnalyticsView history={history} assets={assets} exchangeRate={dynamicExchangeRate} />} />
-          <Route path="/accounts" element={<AccountManager accounts={accounts} setAccounts={setAccounts} assets={assets} exchangeRate={dynamicExchangeRate} />} />
+          <Route path="/accounts" element={<AccountManager accounts={accounts} setAccounts={setAccounts} assets={assets} exchangeRate={dynamicExchangeRate} onAdjustBalance={handleAccountBalanceAdjustment} />} />
         </Routes>
       </main>
 

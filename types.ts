@@ -10,7 +10,9 @@ export enum AssetType {
 
 export enum TransactionType {
   BUY = '매수',
-  SELL = '매도'
+  SELL = '매도',
+  DEPOSIT = '입금',
+  WITHDRAW = '출금'
 }
 
 export enum AccountType {
@@ -29,6 +31,10 @@ export interface Account {
   type: AccountType;
   color?: string;
   isHidden?: boolean; 
+  initialBalance?: number; // 기초 원화 예수금
+  initialBalanceUSD?: number; // 기초 달러 예수금
+  balance?: number; // 원화 예수금
+  balanceUSD?: number; // 달러 예수금
 }
 
 export interface Transaction {
@@ -63,6 +69,8 @@ export interface Asset {
   purchasePriceKRW?: number; 
   currentPrice: number;
   currency: 'KRW' | 'USD';
+  realizedProfit?: number;
+  realizedProfitKRW?: number;
 }
 
 export interface PerformancePoint {

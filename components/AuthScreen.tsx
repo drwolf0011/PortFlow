@@ -14,7 +14,7 @@ interface AuthScreenProps {
   onLoginSuccess: (user: UserProfile) => void;
 }
 
-type AuthStep = 'initial' | 'enter_name' | 'verify_pin' | 'setup_pin' | 'processing' | 'cloud_error';
+type AuthStep = 'initial' | 'enter_name' | 'verify_pin' | 'setup_pin' | 'processing' | 'cloud_error' | 'user_not_found';
 
 const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
   const [step, setStep] = useState<AuthStep>('initial');
@@ -79,7 +79,8 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
         setTargetUser(user);
         setStep('verify_pin');
       } else {
-        setStep('setup_pin');
+        setError('존재하지 않는 고객입니다.');
+        setStep('user_not_found');
       }
       shuffleKeypad();
     } catch (err: any) {
@@ -155,9 +156,13 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
 
         await registerUser(url, key, newUser);
 
-        setLoadingMessage('가입이 완료되었습니다! 로그인합니다...');
+        setLoadingMessage('가입이 완료되었습니다! 로그인 화면으로 이동합니다...');
         triggerHaptic('success');
-        setTimeout(() => onLoginSuccess(newUser), 1000);
+        setTimeout(() => {
+          setStep('enter_name');
+          setPin('');
+          setError(null);
+        }, 1500);
       } catch (err: any) {
         setError(err.message || '가입 처리 중 오류가 발생했습니다.');
         setPin('');
@@ -267,6 +272,33 @@ const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess }) => {
                   </button>
                 ))}
               </div>
+            </div>
+          </div>
+        )}
+
+        {step === 'user_not_found' && (
+          <div className="flex-1 flex flex-col items-center justify-center px-10 text-center animate-in fade-in">
+            <div className="w-24 h-24 bg-amber-50 text-amber-500 rounded-[3rem] flex items-center justify-center mb-8 shadow-xl border border-amber-100">
+              <UserCircle size={48} />
+            </div>
+            <h3 className="text-2xl font-black text-slate-900 mb-2 tracking-tight">존재하지 않는 고객</h3>
+            <p className="text-sm font-bold text-slate-400 leading-relaxed mb-10">
+              입력하신 이름 '{userName}'은(는)<br />등록된 정보가 없습니다.<br />신규 고객으로 등록하시겠습니까?
+            </p>
+            
+            <div className="w-full space-y-3">
+              <button 
+                onClick={() => { setStep('setup_pin'); setError(null); shuffleKeypad(); }}
+                className="w-full py-5 bg-indigo-600 text-white rounded-[1.5rem] font-black text-lg shadow-xl active:scale-95 transition-all flex items-center justify-center gap-2"
+              >
+                <UserPlus size={20} /> 신규 고객 등록하기
+              </button>
+              <button 
+                onClick={() => { setStep('enter_name'); setError(null); }}
+                className="w-full py-4 bg-slate-100 text-slate-500 rounded-[1.5rem] font-black text-sm active:scale-95 transition-all"
+              >
+                다시 입력하기
+              </button>
             </div>
           </div>
         )}

@@ -77,6 +77,21 @@ const ManualTransactionEntry: React.FC<ManualTransactionEntryProps> = ({ onClose
     }
   }, [formData.accountId, accounts]);
 
+  // 입금/출금 선택 시 현금 정보 자동 입력
+  useEffect(() => {
+    if (formData.type === TransactionType.DEPOSIT || formData.type === TransactionType.WITHDRAW) {
+      setFormData(prev => ({
+        ...prev,
+        assetType: AssetType.CASH,
+        name: '현금',
+        ticker: prev.currency === 'USD' ? 'USD' : 'KRW',
+        exchange: 'CASH',
+        price: 1,
+      }));
+      setSearchTerm('현금');
+    }
+  }, [formData.type, formData.currency]);
+
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
     
@@ -151,12 +166,39 @@ const ManualTransactionEntry: React.FC<ManualTransactionEntryProps> = ({ onClose
     setShowSuggestions(false);
   };
 
+  const sortedAccounts = useMemo(() => {
+    return [...accounts].sort((a, b) => {
+      const instCompare = a.institution.localeCompare(b.institution);
+      if (instCompare !== 0) return instCompare;
+      return a.accountNumber.localeCompare(b.accountNumber);
+    });
+  }, [accounts]);
+
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formData.name || !formData.institution || !formData.price || !formData.quantity || !formData.date) {
+    
+    // 입출금의 경우 종목명 및 수량/단가 자동 보정
+    let finalData = { ...formData };
+    if (formData.type === TransactionType.DEPOSIT || formData.type === TransactionType.WITHDRAW) {
+      if (!formData.name) finalData.name = formData.type === TransactionType.DEPOSIT ? '입금' : '출금';
+      
+      // 금액 입력 처리: 수량이나 단가 중 하나만 있으면 나머지를 1로 설정하여 금액을 맞춤
+      if (formData.quantity && !formData.price) finalData.price = 1;
+      if (!formData.quantity && formData.price) {
+        finalData.quantity = formData.price;
+        finalData.price = 1;
+      }
+      
+      if (!formData.assetType) finalData.assetType = AssetType.CASH;
+      if (!formData.ticker) finalData.ticker = formData.currency === 'USD' ? 'USD' : 'KRW';
+      if (!formData.exchange) finalData.exchange = 'CASH';
+    }
+
+    if (!finalData.name || !finalData.institution || !finalData.price || !finalData.quantity || !finalData.date) {
+      console.error("Validation failed:", finalData);
       alert("모든 필수 항목을 입력해주세요."); return;
     }
-    onSave(formData as Transaction);
+    onSave(finalData as Transaction);
   };
 
   const totalPriceKRW = (formData.price || 0) * (formData.quantity || 0) * (formData.currency === 'USD' ? (formData.exchangeRate || exchangeRate) : 1);
@@ -174,22 +216,24 @@ const ManualTransactionEntry: React.FC<ManualTransactionEntryProps> = ({ onClose
         </div>
 
         <form onSubmit={handleSave} className="p-6 space-y-6 overflow-y-auto no-scrollbar">
-          <div className="flex p-1 bg-slate-100 rounded-2xl shrink-0">
-            <button type="button" onClick={() => setFormData(prev => ({ ...prev, type: TransactionType.BUY }))} className={`flex-1 py-3 rounded-xl text-xs font-black transition-all ${formData.type === TransactionType.BUY ? 'bg-rose-500 text-white shadow-md' : 'text-slate-500'}`}>매수(입금)</button>
-            <button type="button" onClick={() => setFormData(prev => ({ ...prev, type: TransactionType.SELL }))} className={`flex-1 py-3 rounded-xl text-xs font-black transition-all ${formData.type === TransactionType.SELL ? 'bg-blue-500 text-white shadow-md' : 'text-slate-500'}`}>매도(출금)</button>
+          <div className="flex p-1 bg-slate-100 rounded-2xl shrink-0 gap-1">
+            <button type="button" onClick={() => setFormData(prev => ({ ...prev, type: TransactionType.BUY }))} className={`flex-1 py-3 rounded-xl text-[10px] font-black transition-all ${formData.type === TransactionType.BUY ? 'bg-rose-500 text-white shadow-md' : 'text-slate-500'}`}>매수</button>
+            <button type="button" onClick={() => setFormData(prev => ({ ...prev, type: TransactionType.SELL }))} className={`flex-1 py-3 rounded-xl text-[10px] font-black transition-all ${formData.type === TransactionType.SELL ? 'bg-blue-500 text-white shadow-md' : 'text-slate-500'}`}>매도</button>
+            <button type="button" onClick={() => setFormData(prev => ({ ...prev, type: TransactionType.DEPOSIT }))} className={`flex-1 py-3 rounded-xl text-[10px] font-black transition-all ${formData.type === TransactionType.DEPOSIT ? 'bg-emerald-500 text-white shadow-md' : 'text-slate-500'}`}>입금</button>
+            <button type="button" onClick={() => setFormData(prev => ({ ...prev, type: TransactionType.WITHDRAW }))} className={`flex-1 py-3 rounded-xl text-[10px] font-black transition-all ${formData.type === TransactionType.WITHDRAW ? 'bg-amber-500 text-white shadow-md' : 'text-slate-500'}`}>출금</button>
           </div>
 
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-1.5">
                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">거래 통화</label>
-               <select name="currency" value={formData.currency} onChange={handleChange} className="w-full px-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-bold outline-none appearance-none focus:border-indigo-500 transition-all">
+               <select name="currency" value={formData.currency || 'KRW'} onChange={handleChange} className="w-full px-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-bold outline-none appearance-none focus:border-indigo-500 transition-all">
                  <option value="KRW">KRW (대한민국 원)</option>
                  <option value="USD">USD (미국 달러)</option>
                </select>
             </div>
             <div className="space-y-1.5">
                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">거래 일자</label>
-               <input type="date" name="date" value={formData.date} onChange={handleChange} className="w-full px-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-bold outline-none focus:border-indigo-500 transition-all" />
+               <input type="date" name="date" value={formData.date || ''} onChange={handleChange} className="w-full px-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-bold outline-none focus:border-indigo-500 transition-all" />
             </div>
           </div>
 
@@ -202,7 +246,7 @@ const ManualTransactionEntry: React.FC<ManualTransactionEntryProps> = ({ onClose
                   type="text" 
                   name="name"
                   placeholder="종목명 또는 티커 입력" 
-                  value={searchTerm} 
+                  value={searchTerm || ''} 
                   onChange={handleChange} 
                   onFocus={() => setShowSuggestions(true)}
                   className="w-full pl-11 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-bold outline-none focus:border-indigo-500 focus:bg-white transition-all" 
@@ -289,14 +333,14 @@ const ManualTransactionEntry: React.FC<ManualTransactionEntryProps> = ({ onClose
               <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">금융기관</label>
               <div className="relative">
                 <Building2 className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300" size={16} />
-                <input type="text" name="institution" placeholder="증권사/은행명" value={formData.institution} onChange={handleChange} className="w-full pl-11 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-bold outline-none focus:border-indigo-500 transition-all" />
+                <input type="text" name="institution" placeholder="증권사/은행명" value={formData.institution || ''} onChange={handleChange} className="w-full pl-11 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-bold outline-none focus:border-indigo-500 transition-all" />
               </div>
             </div>
             <div className="space-y-1.5">
               <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">자산 종류</label>
               <div className="relative">
                 <Layers className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300" size={16} />
-                <select name="assetType" value={formData.assetType} onChange={handleChange} className="w-full pl-11 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-bold outline-none appearance-none focus:border-indigo-500 transition-all cursor-pointer">
+                <select name="assetType" value={formData.assetType || AssetType.STOCK} onChange={handleChange} className="w-full pl-11 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-bold outline-none appearance-none focus:border-indigo-500 transition-all cursor-pointer">
                   {Object.values(AssetType).map(t => <option key={t} value={t}>{t}</option>)}
                 </select>
               </div>
@@ -306,16 +350,16 @@ const ManualTransactionEntry: React.FC<ManualTransactionEntryProps> = ({ onClose
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-1.5">
               <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">거래 계좌</label>
-              <select name="accountId" value={formData.accountId} onChange={handleChange} className="w-full px-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-bold outline-none focus:border-indigo-500 transition-all">
+              <select name="accountId" value={formData.accountId || ''} onChange={handleChange} className="w-full px-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-bold outline-none focus:border-indigo-500 transition-all">
                 <option value="">직접 입력 / 계좌 미지정</option>
-                {accounts.map(acc => <option key={acc.id} value={acc.id}>{acc.nickname} ({acc.institution})</option>)}
+                {sortedAccounts.map(acc => <option key={acc.id} value={acc.id}>{acc.nickname} ({acc.institution})</option>)}
               </select>
             </div>
             <div className="space-y-1.5">
               <label className="text-[10px] font-black text-indigo-600 uppercase tracking-widest ml-1">자산관리유형</label>
               <div className="relative">
                 <Landmark className="absolute left-4 top-1/2 -translate-y-1/2 text-indigo-300" size={14} />
-                <select name="managementType" value={formData.managementType} onChange={handleChange} className="w-full pl-11 pr-4 py-4 bg-indigo-50/50 border border-indigo-100 rounded-2xl text-[11px] font-black text-indigo-700 outline-none focus:border-indigo-500 transition-all appearance-none">
+                <select name="managementType" value={formData.managementType || AccountType.GENERAL} onChange={handleChange} className="w-full pl-11 pr-4 py-4 bg-indigo-50/50 border border-indigo-100 rounded-2xl text-[11px] font-black text-indigo-700 outline-none focus:border-indigo-500 transition-all appearance-none">
                   {Object.values(AccountType).map(type => <option key={type} value={type}>{type}</option>)}
                 </select>
               </div>
@@ -350,13 +394,25 @@ const ManualTransactionEntry: React.FC<ManualTransactionEntryProps> = ({ onClose
             </div>
           )}
 
-          <div className={`rounded-[1.5rem] p-5 border flex items-center justify-between font-bold text-sm shrink-0 ${formData.type === TransactionType.BUY ? 'bg-rose-50 border-rose-100' : 'bg-blue-50 border-blue-100'}`}>
+          <div className={`rounded-[1.5rem] p-5 border flex items-center justify-between font-bold text-sm shrink-0 ${
+            formData.type === TransactionType.BUY ? 'bg-rose-50 border-rose-100' : 
+            formData.type === TransactionType.SELL ? 'bg-blue-50 border-blue-100' :
+            formData.type === TransactionType.DEPOSIT ? 'bg-emerald-50 border-emerald-100' : 'bg-amber-50 border-amber-100'
+          }`}>
             <span className="text-slate-500 font-black">원화 환산 총액 (성과 기준액)</span>
-            <span className={`text-lg font-black ${formData.type === TransactionType.BUY ? 'text-rose-600' : 'text-blue-600'}`}>{Math.floor(totalPriceKRW).toLocaleString()}원</span>
+            <span className={`text-lg font-black ${
+              formData.type === TransactionType.BUY ? 'text-rose-600' : 
+              formData.type === TransactionType.SELL ? 'text-blue-600' :
+              formData.type === TransactionType.DEPOSIT ? 'text-emerald-600' : 'text-amber-600'
+            }`}>{Math.floor(totalPriceKRW).toLocaleString()}원</span>
           </div>
 
           <div className="pb-16">
-            <button type="submit" className={`w-full text-white py-5 rounded-2xl font-black text-sm transition-all shadow-xl active:scale-95 ${formData.type === TransactionType.BUY ? 'bg-rose-500 shadow-rose-100' : 'bg-blue-500 shadow-blue-100'} flex items-center justify-center gap-2`}><Save size={18} /> 거래 내역 저장</button>
+            <button type="submit" className={`w-full text-white py-5 rounded-2xl font-black text-sm transition-all shadow-xl active:scale-95 ${
+              formData.type === TransactionType.BUY ? 'bg-rose-500 shadow-rose-100' : 
+              formData.type === TransactionType.SELL ? 'bg-blue-500 shadow-blue-100' :
+              formData.type === TransactionType.DEPOSIT ? 'bg-emerald-500 shadow-emerald-100' : 'bg-amber-500 shadow-amber-100'
+            } flex items-center justify-center gap-2`}><Save size={18} /> 거래 내역 저장</button>
           </div>
         </form>
       </div>

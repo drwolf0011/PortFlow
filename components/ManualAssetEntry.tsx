@@ -132,7 +132,7 @@ const ManualAssetEntry: React.FC<ManualAssetEntryProps> = ({ onClose, onSave, as
               <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">연결 계좌</label>
               <div className="relative">
                 <CreditCard className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300" size={16} />
-                <select name="accountId" value={formData.accountId} onChange={handleChange} className="w-full pl-11 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold outline-none appearance-none focus:border-indigo-500 focus:bg-white transition-all">
+                <select name="accountId" value={formData.accountId || ''} onChange={handleChange} className="w-full pl-11 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold outline-none appearance-none focus:border-indigo-500 focus:bg-white transition-all">
                   <option value="">미연결 (직접 입력)</option>
                   {accounts.map(acc => <option key={acc.id} value={acc.id}>{acc.nickname} ({acc.institution})</option>)}
                 </select>
@@ -145,7 +145,7 @@ const ManualAssetEntry: React.FC<ManualAssetEntryProps> = ({ onClose, onSave, as
                 <Landmark className="absolute left-4 top-1/2 -translate-y-1/2 text-indigo-300" size={16} />
                 <select 
                   name="managementType" 
-                  value={formData.managementType} 
+                  value={formData.managementType || AccountType.GENERAL} 
                   onChange={handleChange} 
                   className="w-full pl-11 pr-4 py-4 bg-indigo-50 border border-indigo-100 rounded-xl text-sm font-black outline-none appearance-none focus:border-indigo-500 transition-all text-indigo-700"
                 >
@@ -166,7 +166,7 @@ const ManualAssetEntry: React.FC<ManualAssetEntryProps> = ({ onClose, onSave, as
                   type="text" 
                   name="name"
                   placeholder="예: 삼성전자, 테슬라 등" 
-                  value={searchTerm} 
+                  value={searchTerm || ''} 
                   onChange={handleChange} 
                   className="w-full pl-11 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold outline-none focus:border-indigo-500 focus:bg-white transition-all" 
                 />
@@ -218,14 +218,14 @@ const ManualAssetEntry: React.FC<ManualAssetEntryProps> = ({ onClose, onSave, as
                 type="text" 
                 name="ticker"
                 placeholder="예: 005930, TSLA" 
-                value={formData.ticker} 
+                value={formData.ticker || ''} 
                 onChange={handleChange} 
                 className="w-full px-4 py-4 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold outline-none focus:border-indigo-500 focus:bg-white transition-all" 
               />
             </div>
             <div className="space-y-1.5">
               <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1 flex items-center h-[15px]">거래소(KIS용)</label>
-              <select name="exchange" value={formData.exchange} onChange={handleChange} className="w-full px-4 py-4 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold appearance-none outline-none focus:border-indigo-500 focus:bg-white transition-all">
+              <select name="exchange" value={formData.exchange || ''} onChange={handleChange} className="w-full px-4 py-4 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold appearance-none outline-none focus:border-indigo-500 focus:bg-white transition-all">
                 <option value="">자동/미지정</option>
                 <option value="KRX">한국거래소 (KRX)</option>
                 <option value="NAS">나스닥 (NAS)</option>
@@ -241,20 +241,20 @@ const ManualAssetEntry: React.FC<ManualAssetEntryProps> = ({ onClose, onSave, as
             <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">금융기관</label>
             <div className="relative">
               <Building2 className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300" size={16} />
-              <input type="text" name="institution" placeholder="증권사/은행명 직접 입력" value={formData.institution} onChange={handleChange} className="w-full pl-11 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold outline-none focus:border-indigo-500 focus:bg-white transition-all" />
+              <input type="text" name="institution" placeholder="증권사/은행명 직접 입력" value={formData.institution || ''} onChange={handleChange} className="w-full pl-11 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold outline-none focus:border-indigo-500 focus:bg-white transition-all" />
             </div>
           </div>
           
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-1.5">
               <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">자산 종류</label>
-              <select name="type" value={formData.type} onChange={handleChange} className="w-full px-4 py-4 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold appearance-none cursor-pointer outline-none focus:border-indigo-500 focus:bg-white transition-all">
+              <select name="type" value={formData.type || AssetType.STOCK} onChange={handleChange} className="w-full px-4 py-4 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold appearance-none cursor-pointer outline-none focus:border-indigo-500 focus:bg-white transition-all">
                 {Object.values(AssetType).map(t => <option key={t} value={t}>{t}</option>)}
               </select>
             </div>
             <div className="space-y-1.5">
               <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">거래 통화</label>
-              <select name="currency" value={formData.currency} onChange={handleChange} className="w-full px-4 py-4 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold appearance-none outline-none focus:border-indigo-500 focus:bg-white transition-all"><option value="KRW">KRW</option><option value="USD">USD</option></select>
+              <select name="currency" value={formData.currency || 'KRW'} onChange={handleChange} className="w-full px-4 py-4 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold appearance-none outline-none focus:border-indigo-500 focus:bg-white transition-all"><option value="KRW">KRW</option><option value="USD">USD</option></select>
             </div>
           </div>
           

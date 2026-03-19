@@ -58,7 +58,7 @@ const Dashboard: React.FC<DashboardProps> = ({ assets, accounts, user, onRefresh
   };
 
   const stats = useMemo(() => {
-    let total = 0, totalCost = 0;
+    let total = 0, totalCost = 0, totalRealizedProfit = 0;
     const typeDist: Record<string, { val: number; cost: number }> = {};
     const instDist: Record<string, { val: number; profit: number; count: number }> = {};
     const currencyDist: Record<string, number> = { KRW: 0, USD: 0 };
@@ -79,7 +79,17 @@ const Dashboard: React.FC<DashboardProps> = ({ assets, accounts, user, onRefresh
       return t;
     };
 
-    const processedAssets = assets.filter(a => !a.accountId || !hiddenAccountIds.has(a.accountId))
+    const totalCashKRW = accounts
+      .filter(a => !a.isHidden)
+      .reduce((acc, a) => acc + (a.balance || 0), 0);
+
+    const totalCashUSD = accounts
+      .filter(a => !a.isHidden)
+      .reduce((acc, a) => acc + (a.balanceUSD || 0), 0);
+
+    const totalCashBalance = totalCashKRW + (totalCashUSD * (exchangeRate || 1350));
+
+    const processedAssets = assets.filter(a => (!a.accountId || !hiddenAccountIds.has(a.accountId)) && a.type !== AssetType.CASH)
       .map(a => {
         const mult = a.currency === 'USD' ? (exchangeRate || 1350) : 1;
         const currentVal = (Number(a.currentPrice) || 0) * (Number(a.quantity) || 0) * mult;
@@ -87,14 +97,16 @@ const Dashboard: React.FC<DashboardProps> = ({ assets, accounts, user, onRefresh
         const costVal = (a.quantity || 0) * (a.purchasePriceKRW || defaultPriceKRW);
         const profit = currentVal - costVal;
         const profitRate = costVal > 0 ? (profit / costVal) * 100 : 0;
+        const realizedProfitKRW = a.realizedProfitKRW || (a.realizedProfit || 0) * mult;
         
-        return { ...a, currentVal, costVal, profit, profitRate };
+        return { ...a, currentVal, costVal, profit, profitRate, realizedProfitKRW };
       })
       .sort((a, b) => b.currentVal - a.currentVal);
 
     processedAssets.forEach(a => {
       total += a.currentVal;
       totalCost += a.costVal;
+      totalRealizedProfit += a.realizedProfitKRW;
       
       const rawType = a.type ? String(a.type) : '기타 자산';
       const typeKey = normalizeType(rawType);
@@ -123,6 +135,20 @@ const Dashboard: React.FC<DashboardProps> = ({ assets, accounts, user, onRefresh
       accountTypeDist[accTypeLabel] = (accountTypeDist[accTypeLabel] || 0) + a.currentVal;
     });
 
+    // 예수금(현금)을 자산 유형 및 통화 분포에 추가
+    if (totalCashBalance > 0) {
+      total += totalCashBalance;
+      totalCost += totalCashBalance; // 현금은 원가=가치
+      
+      const cashKey = AssetType.CASH;
+      if (!typeDist[cashKey]) typeDist[cashKey] = { val: 0, cost: 0 };
+      typeDist[cashKey].val += totalCashBalance;
+      typeDist[cashKey].cost += totalCashBalance;
+
+      currencyDist['KRW'] = (currencyDist['KRW'] || 0) + totalCashKRW;
+      currencyDist['USD'] = (currencyDist['USD'] || 0) + (totalCashUSD * (exchangeRate || 1350));
+    }
+
     const profit = total - totalCost;
     const profitRate = totalCost > 0 ? (profit / totalCost) * 100 : 0;
 
@@ -150,7 +176,7 @@ const Dashboard: React.FC<DashboardProps> = ({ assets, accounts, user, onRefresh
     };
 
     return { 
-      total, profit, profitRate, processedAssets, 
+      total, profit, profitRate, totalRealizedProfit, totalCashBalance, processedAssets, 
       typeDist, instDist, currencyDist, tickerDist, accountTypeDist, healthScore,
       riskLevel: overallRisk, riskBreakdown, topInstName: topInstEntry?.[0],
       winners, losers, divScore, allocScore
@@ -262,10 +288,26 @@ const Dashboard: React.FC<DashboardProps> = ({ assets, accounts, user, onRefresh
             <div className="relative z-10">
               <p className="text-indigo-100 text-[10px] font-black uppercase tracking-widest mb-1 opacity-80">Visible Net Worth</p>
               <h3 className="text-4xl font-black mb-6 tracking-tighter">{Math.floor(stats.total).toLocaleString()}원</h3>
-              <div className="flex flex-wrap items-center gap-3">
-                <div className={`px-4 py-2 rounded-2xl flex items-center gap-1.5 text-xs font-black ${stats.profit >= 0 ? 'bg-rose-500/20 text-rose-100' : 'bg-blue-500/20 text-blue-100'}`}>
-                  {stats.profit >= 0 ? <TrendingUp size={14} /> : <ArrowDownRight size={14} />}
-                  {stats.profitRate.toFixed(1)}% ({Math.floor(stats.profit).toLocaleString()}원)
+              <div className="grid grid-cols-2 gap-3">
+                <div className={`p-3 rounded-2xl flex flex-col gap-1 ${stats.profit >= 0 ? 'bg-rose-500/20 border border-rose-500/30' : 'bg-blue-500/20 border border-blue-500/30'}`}>
+                  <div className="flex items-center gap-1.5 text-[9px] font-black uppercase tracking-widest opacity-70">
+                    {stats.profit >= 0 ? <TrendingUp size={10} /> : <ArrowDownRight size={10} />}
+                    평가 손익
+                  </div>
+                  <div className="flex flex-col">
+                    <span className="text-sm font-black">{Math.floor(stats.profit).toLocaleString()}원</span>
+                    <span className="text-[10px] font-bold opacity-80">{stats.profitRate >= 0 ? '+' : ''}{stats.profitRate.toFixed(1)}%</span>
+                  </div>
+                </div>
+                <div className={`p-3 rounded-2xl flex flex-col gap-1 ${stats.totalRealizedProfit >= 0 ? 'bg-emerald-500/20 border border-emerald-500/30' : 'bg-amber-500/20 border border-amber-500/30'}`}>
+                  <div className="flex items-center gap-1.5 text-[9px] font-black uppercase tracking-widest opacity-70">
+                    {stats.totalRealizedProfit >= 0 ? <Trophy size={10} /> : <TrendingDown size={10} />}
+                    실현 손익
+                  </div>
+                  <div className="flex flex-col">
+                    <span className="text-sm font-black">{Math.floor(stats.totalRealizedProfit).toLocaleString()}원</span>
+                    <span className="text-[10px] font-bold opacity-80">누적 확정 수익</span>
+                  </div>
                 </div>
               </div>
             </div>
