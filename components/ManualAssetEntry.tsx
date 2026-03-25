@@ -32,6 +32,8 @@ const ManualAssetEntry: React.FC<ManualAssetEntryProps> = ({ onClose, onSave, as
   const [searchTerm, setSearchTerm] = useState(asset?.name || '');
   const [searchResults, setSearchResults] = useState<StockInfo[]>([]);
 
+  const [error, setError] = useState<string | null>(null);
+
   // 계좌 선택 시 계좌 유형을 자산관리유형으로 자동 연동
   useEffect(() => {
     if (formData.accountId) {
@@ -98,17 +100,62 @@ const ManualAssetEntry: React.FC<ManualAssetEntryProps> = ({ onClose, onSave, as
 
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formData.name || !formData.institution) {
-      alert("종목명과 금융기관을 입력해주세요."); return;
+    setError(null);
+
+    const trimmedName = formData.name?.trim() || '';
+    const trimmedInstitution = formData.institution?.trim() || '';
+    
+    if (!trimmedName || !trimmedInstitution) {
+      setError("종목명과 금융기관을 입력해주세요."); 
+      return;
     }
 
-    if (!formData.ticker) {
+    let finalTicker = formData.ticker?.trim() || '';
+    let finalExchange = formData.exchange?.trim() || '';
+
+    // 티커 및 거래소 정규화 및 검증
+    if (formData.currency === 'KRW' && (formData.type === AssetType.STOCK || formData.type === AssetType.ETF)) {
+      if (finalTicker && !/^\d{6}$/.test(finalTicker)) {
+        setError("한국 주식/ETF의 종목코드(Ticker)는 6자리 숫자여야 합니다.");
+        return;
+      }
+    } else if (formData.currency === 'USD') {
+      if (finalTicker) {
+        if (!/^[A-Za-z]+$/.test(finalTicker)) {
+          setError("미국 주식의 종목코드(Ticker)는 영문자로만 구성되어야 합니다.");
+          return;
+        }
+        finalTicker = finalTicker.toUpperCase();
+      }
+      
+      if (formData.type !== AssetType.CASH && !finalExchange) {
+        finalExchange = 'NAS'; // 기본값 할당
+      }
+    }
+
+    if ((formData.quantity || 0) < 0) {
+      setError("보유 수량은 0 이상이어야 합니다.");
+      return;
+    }
+
+    if ((formData.purchasePrice || 0) < 0) {
+      setError("매수 단가는 0 이상이어야 합니다.");
+      return;
+    }
+
+    if (!finalTicker) {
       if(!window.confirm("종목코드(Ticker)가 없으면 실시간 시세 조회가 불가능할 수 있습니다. 그래도 저장하시겠습니까?")) {
           return;
       }
     }
 
-    onSave(formData as Asset);
+    onSave({
+      ...formData,
+      name: trimmedName,
+      institution: trimmedInstitution,
+      ticker: finalTicker,
+      exchange: finalExchange
+    } as Asset);
   };
 
   const currentKRW = formData.currency === 'USD' ? (formData.currentPrice || 0) * exchangeRate : (formData.currentPrice || 0);
@@ -127,6 +174,11 @@ const ManualAssetEntry: React.FC<ManualAssetEntryProps> = ({ onClose, onSave, as
         </div>
         
         <form onSubmit={handleSave} className="p-6 space-y-5 overflow-y-auto no-scrollbar">
+          {error && (
+            <div className="p-3 bg-red-50 text-red-600 text-xs font-bold rounded-xl border border-red-100">
+              {error}
+            </div>
+          )}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="space-y-1.5">
               <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">연결 계좌</label>

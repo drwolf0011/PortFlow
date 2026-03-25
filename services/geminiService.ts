@@ -51,24 +51,52 @@ const saveCacheToStorage = () => {
 
 const safeJsonParse = (text: string) => {
   if (!text) return null;
-  let cleaned = text.replace(/```json|```/g, "").trim();
+  let cleaned = text.trim();
+  
+  // 1. Remove markdown code blocks if present
+  if (cleaned.startsWith('```')) {
+    cleaned = cleaned.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
+  }
+  
+  // 2. Find the first occurrence of { or [ and the last occurrence of } or ]
   const firstBrace = cleaned.indexOf('{');
   const firstBracket = cleaned.indexOf('[');
   let startIdx = -1;
+  
   if (firstBrace !== -1 && (firstBracket === -1 || firstBrace < firstBracket)) {
     startIdx = firstBrace;
   } else if (firstBracket !== -1) {
     startIdx = firstBracket;
   }
+  
   if (startIdx === -1) return null;
-  cleaned = cleaned.substring(startIdx);
+  
+  // Find the last matching bracket/brace
+  const lastBrace = cleaned.lastIndexOf('}');
+  const lastBracket = cleaned.lastIndexOf(']');
+  let endIdx = -1;
+  
+  if (lastBrace !== -1 && (lastBracket === -1 || lastBrace > lastBracket)) {
+    endIdx = lastBrace;
+  } else if (lastBracket !== -1) {
+    endIdx = lastBracket;
+  }
+  
+  if (endIdx === -1 || endIdx < startIdx) return null;
+  
+  cleaned = cleaned.substring(startIdx, endIdx + 1);
+  
   try {
     return JSON.parse(cleaned);
   } catch (e) {
+    console.warn('Initial JSON parse failed, attempting repair...', e);
     try {
       let repaired = cleaned;
+      // Basic repair: check for unclosed quotes
       const quoteCount = (repaired.match(/"/g) || []).length;
       if (quoteCount % 2 !== 0) repaired += '"';
+      
+      // Basic repair: close open braces/brackets
       const stack: string[] = [];
       for (let i = 0; i < repaired.length; i++) {
         const char = repaired[i];
@@ -78,11 +106,27 @@ const safeJsonParse = (text: string) => {
         else if (char === ']') { if (stack[stack.length - 1] === ']') stack.pop(); }
       }
       while (stack.length > 0) repaired += stack.pop();
+      
       return JSON.parse(repaired);
     } catch (repairedError) {
+      console.error('JSON repair failed:', repairedError);
       return null;
     }
   }
+};
+
+const cleanMarkdown = (text: string | undefined | null): string => {
+  if (!text) return "";
+  let cleaned = text.trim();
+  // Remove ```markdown or ``` at the beginning
+  cleaned = cleaned.replace(/^```(?:markdown)?\s*/i, '');
+  // Also remove leftover "markdown" text if backticks were stripped globally before
+  cleaned = cleaned.replace(/^markdown\s*/i, '');
+  // Remove ``` at the end
+  cleaned = cleaned.replace(/\s*```$/i, '');
+  // Handle literal '\n' strings if AI double-escaped them
+  cleaned = cleaned.replace(/\\n/g, '\n');
+  return cleaned;
 };
 
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
@@ -438,8 +482,8 @@ export const getAIDiagnosis = async (
     });
     const parsed = safeJsonParse(response.text);
     return { 
-      currentDiagnosis: parsed?.currentDiagnosis || "진단 생성 실패",
-      marketConditions: parsed?.marketConditions || "정보 없음",
+      currentDiagnosis: cleanMarkdown(parsed?.currentDiagnosis || "진단 생성 실패"),
+      marketConditions: cleanMarkdown(parsed?.marketConditions || "정보 없음"),
       sources: [] 
     };
   } catch (error) { throw error; }
@@ -591,7 +635,7 @@ export const getStockDeepDive = async (query: string): Promise<{ text: string, s
       contents: prompt, 
       config: { tools: [{ googleSearch: {} }] } 
     });
-    return { text: response.text || "분석 불가", sources: [] };
+    return { text: cleanMarkdown(response.text || "분석 불가"), sources: [] };
   } catch (error) { throw error; }
 };
 

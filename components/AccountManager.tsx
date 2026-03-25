@@ -136,6 +136,8 @@ const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAccounts, 
     initialBalanceUSD: 0
   });
 
+  const [error, setError] = useState<string | null>(null);
+
   // Separate and sort accounts
   const sortedAccounts = [...accounts].sort((a, b) => {
     // 1. Sort by institution
@@ -168,6 +170,7 @@ const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAccounts, 
       initialBalanceUSD: 0
     });
     setEditingAccountId(null);
+    setError(null);
     setIsAdding(true);
     setIsAdjustingBalance(false);
   };
@@ -175,6 +178,7 @@ const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAccounts, 
   const handleOpenEdit = (account: Account) => {
     setFormData({ ...account });
     setEditingAccountId(account.id);
+    setError(null);
     setIsAdding(true);
     setIsAdjustingBalance(false);
   };
@@ -185,7 +189,23 @@ const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAccounts, 
   };
 
   const handleSave = () => {
-    if (!formData.institution || !formData.nickname) return;
+    setError(null);
+    
+    const trimmedInstitution = formData.institution?.trim() || '';
+    const trimmedNickname = formData.nickname?.trim() || '';
+
+    if (!trimmedInstitution || !trimmedNickname) {
+      setError("금융기관과 계좌 별칭을 입력해주세요.");
+      return;
+    }
+
+    const initialBalance = Number(formData.initialBalance || 0);
+    const initialBalanceUSD = Number(formData.initialBalanceUSD || 0);
+
+    if (isNaN(initialBalance) || initialBalance < 0 || isNaN(initialBalanceUSD) || initialBalanceUSD < 0) {
+      setError("초기 잔액은 0 이상의 유효한 숫자여야 합니다.");
+      return;
+    }
 
     if (editingAccountId) {
       // Update existing account
@@ -193,22 +213,24 @@ const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAccounts, 
         a.id === editingAccountId ? { 
           ...a, 
           ...formData as Account,
-          initialBalance: Number(formData.initialBalance || 0),
-          initialBalanceUSD: Number(formData.initialBalanceUSD || 0)
+          institution: trimmedInstitution,
+          nickname: trimmedNickname,
+          initialBalance,
+          initialBalanceUSD
         } : a
       ));
     } else {
       // Create new account
       const account: Account = {
         id: Math.random().toString(36).substr(2, 9),
-        institution: formData.institution!,
-        nickname: formData.nickname!,
-        accountNumber: formData.accountNumber || '계좌번호 미등록',
+        institution: trimmedInstitution,
+        nickname: trimmedNickname,
+        accountNumber: formData.accountNumber?.trim() || '계좌번호 미등록',
         type: formData.type || AccountType.GENERAL,
         color: '#4F46E5',
         isHidden: false,
-        initialBalance: Number(formData.initialBalance || 0),
-        initialBalanceUSD: Number(formData.initialBalanceUSD || 0)
+        initialBalance,
+        initialBalanceUSD
       };
       setAccounts([...accounts, account]);
     }
@@ -411,6 +433,11 @@ const AccountManager: React.FC<AccountManagerProps> = ({ accounts, setAccounts, 
             </div>
             
             <div className="flex-1 overflow-y-auto p-8 space-y-5 custom-scrollbar">
+              {error && (
+                <div className="p-3 bg-red-50 text-red-600 text-xs font-bold rounded-xl border border-red-100">
+                  {error}
+                </div>
+              )}
               <div className="space-y-1.5">
                 <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">금융기관</label>
                 <div className="relative">

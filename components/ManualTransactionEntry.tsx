@@ -92,6 +92,8 @@ const ManualTransactionEntry: React.FC<ManualTransactionEntryProps> = ({ onClose
     }
   }, [formData.type, formData.currency]);
 
+  const [error, setError] = useState<string | null>(null);
+
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
     
@@ -176,6 +178,7 @@ const ManualTransactionEntry: React.FC<ManualTransactionEntryProps> = ({ onClose
 
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
+    setError(null);
     
     // 입출금의 경우 종목명 및 수량/단가 자동 보정
     let finalData = { ...formData };
@@ -194,11 +197,38 @@ const ManualTransactionEntry: React.FC<ManualTransactionEntryProps> = ({ onClose
       if (!formData.exchange) finalData.exchange = 'CASH';
     }
 
-    if (!finalData.name || !finalData.institution || !finalData.price || !finalData.quantity || !finalData.date) {
-      console.error("Validation failed:", finalData);
-      alert("모든 필수 항목을 입력해주세요."); return;
+    const trimmedName = finalData.name?.trim() || '';
+    const trimmedInstitution = finalData.institution?.trim() || '';
+
+    if (!trimmedName || !trimmedInstitution || !finalData.price || !finalData.quantity || !finalData.date) {
+      setError("모든 필수 항목을 입력해주세요."); 
+      return;
     }
-    onSave(finalData as Transaction);
+
+    if (finalData.price < 0 || finalData.quantity < 0) {
+      setError("단가와 수량은 0 이상이어야 합니다.");
+      return;
+    }
+
+    // 날짜 검증
+    const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+    if (!dateRegex.test(finalData.date)) {
+      setError("날짜 형식이 올바르지 않습니다. (YYYY-MM-DD)");
+      return;
+    }
+
+    const selectedDate = new Date(finalData.date);
+    const today = new Date();
+    if (selectedDate > today) {
+      setError("미래의 날짜로 거래를 등록할 수 없습니다.");
+      return;
+    }
+
+    onSave({
+      ...finalData,
+      name: trimmedName,
+      institution: trimmedInstitution
+    } as Transaction);
   };
 
   const totalPriceKRW = (formData.price || 0) * (formData.quantity || 0) * (formData.currency === 'USD' ? (formData.exchangeRate || exchangeRate) : 1);
@@ -216,6 +246,11 @@ const ManualTransactionEntry: React.FC<ManualTransactionEntryProps> = ({ onClose
         </div>
 
         <form onSubmit={handleSave} className="p-6 space-y-6 overflow-y-auto no-scrollbar">
+          {error && (
+            <div className="p-3 bg-red-50 text-red-600 text-xs font-bold rounded-xl border border-red-100">
+              {error}
+            </div>
+          )}
           <div className="flex p-1 bg-slate-100 rounded-2xl shrink-0 gap-1">
             <button type="button" onClick={() => setFormData(prev => ({ ...prev, type: TransactionType.BUY }))} className={`flex-1 py-3 rounded-xl text-[10px] font-black transition-all ${formData.type === TransactionType.BUY ? 'bg-rose-500 text-white shadow-md' : 'text-slate-500'}`}>매수</button>
             <button type="button" onClick={() => setFormData(prev => ({ ...prev, type: TransactionType.SELL }))} className={`flex-1 py-3 rounded-xl text-[10px] font-black transition-all ${formData.type === TransactionType.SELL ? 'bg-blue-500 text-white shadow-md' : 'text-slate-500'}`}>매도</button>

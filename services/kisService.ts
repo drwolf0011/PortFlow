@@ -278,9 +278,12 @@ export const getDomesticPrice = async (symbol: string, token: string, appKey: st
 // 3. 해외 주식 현재가 조회
 export const getOverseasPrice = async (symbol: string, exchange: string, token: string, appKey: string, appSecret: string, baseUrl: string, isVirtual: boolean = false) => {
   let excd = exchange || 'NAS';
-  if (['NASDAQ', '나스닥'].includes(excd)) excd = 'NAS';
-  if (['NYSE', '뉴욕'].includes(excd)) excd = 'NYS';
-  if (['AMEX', '아멕스'].includes(excd)) excd = 'AMS';
+  const upperExcd = excd.toUpperCase();
+  
+  if (['NASDAQ', '나스닥', 'NAS'].includes(upperExcd)) excd = 'NAS';
+  else if (upperExcd.includes('NYSE') || upperExcd.includes('NEW YORK') || upperExcd.includes('ARCA') || ['뉴욕', 'NYS'].includes(upperExcd)) excd = 'NYS';
+  else if (['AMEX', '아멕스', 'AMS'].includes(upperExcd)) excd = 'AMS';
+  else excd = 'NAS'; // 기본값으로 나스닥 설정 (3자리 규격 강제)
 
   // 프리뷰용 랜덤 가격 생성
   const randomPrice = (Math.random() * 100 + 100).toFixed(2);

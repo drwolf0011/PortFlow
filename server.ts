@@ -16,8 +16,8 @@ async function startServer() {
       target: "https://openapi.koreainvestment.com:9443",
       changeOrigin: true,
       secure: false,
-      proxyTimeout: 30000,
-      timeout: 30000,
+      proxyTimeout: 60000,
+      timeout: 60000,
       pathRewrite: {
         "^/api/kis/real": "",
       },
@@ -78,8 +78,8 @@ async function startServer() {
       target: "https://openapivts.koreainvestment.com:29443",
       changeOrigin: true,
       secure: false,
-      proxyTimeout: 30000,
-      timeout: 30000,
+      proxyTimeout: 60000,
+      timeout: 60000,
       pathRewrite: {
         "^/api/kis/virtual": "",
       },
