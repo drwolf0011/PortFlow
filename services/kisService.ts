@@ -272,7 +272,11 @@ export const getDomesticPrice = async (symbol: string, token: string, appKey: st
     console.error(`[KIS Domestic Price Error]`, data);
     throw new Error(errorMsg);
   }
-  return { price: parseInt(data.output.stck_prpr, 10), source };
+  if (!data?.output || typeof data.output.stck_prpr === 'undefined') {
+    console.error(`[KIS Domestic Price Error] Invalid output structure`, data);
+    return { price: 0, source: 'FALLBACK_MOCK' };
+  }
+  return { price: parseInt(data.output.stck_prpr, 10) || 0, source };
 };
 
 // 3. 해외 주식 현재가 조회
@@ -312,7 +316,11 @@ export const getOverseasPrice = async (symbol: string, exchange: string, token: 
     console.error(`[KIS Overseas Price Error]`, data);
     throw new Error(errorMsg);
   }
-  return { price: parseFloat(data.output.last), source };
+  if (!data?.output || typeof data.output.last === 'undefined') {
+    console.error(`[KIS Overseas Price Error] Invalid output structure`, data);
+    return { price: 0, source: 'FALLBACK_MOCK' };
+  }
+  return { price: parseFloat(data.output.last) || 0, source };
 };
 
 // 4. 통합 업데이트 함수
@@ -328,7 +336,7 @@ export const updateAssetsWithKis = async (
   const baseUrl = isVirtual ? BASE_URL_VIRTUAL : BASE_URL_REAL;
   const token = await getAccessToken(config.appKey, config.appSecret, baseUrl, supabaseUrl, supabaseKey, userId);
   
-  const updatedAssets = [...assets];
+  const updatedAssets = assets.map(a => ({ ...a }));
   let finalSource: DataSource = isVirtual ? 'KIS_VIRTUAL' : 'KIS_REAL';
   
   const targetAssets = updatedAssets.filter(a => a.type !== AssetType.CASH && a.ticker);

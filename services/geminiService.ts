@@ -206,7 +206,7 @@ export const getMarketBriefing = async (): Promise<string> => {
   const prompt = `Provide a concise 3-line market briefing in Korean. Include latest S&P 500, KOSPI, and KRW/USD exchange rate trends. No emojis.`;
   try {
     const response = await generateContentWithRetry({
-      model: 'gemini-3-flash-preview',
+      model: 'gemini-3.5-flash',
       contents: prompt,
       config: { tools: [{ googleSearch: {} }] }
     });
@@ -274,7 +274,7 @@ export const updateAssetPrices = async (assets: Asset[], onProgress?: (current: 
       
       try {
         const response = await generateContentWithRetry({
-          model: 'gemini-3-flash-preview',
+          model: 'gemini-3.5-flash',
           contents: prompt,
           config: {
             tools: [{ googleSearch: {} }],
@@ -301,7 +301,7 @@ export const updateAssetPrices = async (assets: Asset[], onProgress?: (current: 
         });
 
         const parsed = safeJsonParse(response.text);
-        if (parsed?.prices) {
+        if (parsed?.prices && Array.isArray(parsed.prices)) {
           parsed.prices.forEach((p: any) => {
             allUpdatedPrices[p.mapKey] = p.price;
             PRICE_CACHE.set(p.mapKey, { price: p.price, timestamp: now });
@@ -371,7 +371,7 @@ export const generateGoalPrompt = async (answers: any): Promise<{ goal: string, 
   
   try {
     const response = await generateContentWithRetry({
-      model: 'gemini-3-flash-preview',
+      model: 'gemini-3.5-flash',
       contents: prompt,
       config: { 
         responseMimeType: "application/json",
@@ -465,7 +465,7 @@ export const getAIDiagnosis = async (
 
   try {
     const response = await generateContentWithRetry({
-      model: 'gemini-3-pro-preview', 
+      model: 'gemini-3.1-pro-preview', 
       contents: prompt,
       config: { 
         tools: [{ googleSearch: {} }],
@@ -535,7 +535,7 @@ export const getAIStrategy = async (
 
   try {
     const response = await generateContentWithRetry({
-      model: 'gemini-3-pro-preview', 
+      model: 'gemini-3.1-pro-preview', 
       contents: prompt,
       config: { 
         responseMimeType: "application/json",
@@ -591,7 +591,7 @@ export const searchStockList = async (query: string): Promise<StockInfo[]> => {
   const prompt = `Search for 5 investment assets related to "${query}" and return info as JSON. Include the market/exchange name (e.g., NASDAQ, NYSE, KRX).`;
   try {
     const response = await generateContentWithRetry({
-      model: 'gemini-3-flash-preview',
+      model: 'gemini-3.5-flash',
       contents: prompt,
       config: {
         tools: [{ googleSearch: {} }],
@@ -631,7 +631,7 @@ export const getStockDeepDive = async (query: string): Promise<{ text: string, s
   const prompt = `Write a comprehensive deep-dive investment analysis report for "${query}" in Korean (Markdown format). Focus on recent performance, future outlook, and key risks.`;
   try {
     const response = await generateContentWithRetry({ 
-      model: 'gemini-3-pro-preview', 
+      model: 'gemini-3.1-pro-preview', 
       contents: prompt, 
       config: { tools: [{ googleSearch: {} }] } 
     });
@@ -643,7 +643,7 @@ export const classifyTransactionTypes = async (transactions: any[]): Promise<any
   const prompt = `Classify transaction categories: ${JSON.stringify(transactions)}`;
   try {
     const response = await generateContentWithRetry({
-      model: 'gemini-3-flash-preview',
+      model: 'gemini-3.5-flash',
       contents: prompt,
       config: {
         responseMimeType: "application/json",
@@ -697,7 +697,7 @@ export const enrichAssetData = async (
 
     try {
       const response = await generateContentWithRetry({
-        model: 'gemini-3-flash-preview',
+        model: 'gemini-3.5-flash',
         contents: prompt,
         config: {
           tools: [{ googleSearch: {} }],

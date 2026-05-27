@@ -1,6 +1,7 @@
 
 import React, { useState, useMemo } from 'react';
 import { Asset, AssetType, Account, AccountType } from '../types';
+import { AssetSparkline } from './AssetSparkline';
 import { 
   Filter, Trash2, Edit3, Plus, RefreshCw, AlertCircle, 
   Globe, CreditCard, History, RotateCcw, Landmark, 
@@ -325,12 +326,17 @@ const AssetList: React.FC<AssetListProps> = ({
                           </span>
                         )}
                       </div>
-                      <div className="flex items-center gap-2 flex-wrap">
+                       <div className="flex items-center gap-2 flex-wrap">
                         <h4 className="text-[15px] font-black text-slate-800 leading-tight">{asset.name}</h4>
                         {asset.ticker && (
                           <span className="text-[10px] font-bold text-slate-400 font-mono tracking-tight bg-slate-50 px-1.5 py-0.5 rounded-lg border border-slate-100">
                             {asset.ticker}
                           </span>
+                        )}
+                        {asset.type !== AssetType.CASH && (
+                          <div className="ml-1 self-center scale-90">
+                            <AssetSparkline name={asset.name} isPlus={isPlus} />
+                          </div>
                         )}
                       </div>
                     </div>

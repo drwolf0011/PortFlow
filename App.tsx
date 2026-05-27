@@ -27,6 +27,26 @@ import { updateAssetPrices, enrichAssetData } from './services/geminiService';
 import { updateAssetsWithKis, getLastKisDebugLog, KisDebugLog } from './services/kisService';
 import { loadUserData, saveUserData, loadFromLegacyBin } from './services/storageService';
 import { triggerHaptic } from './utils/mobile';
+import { motion, AnimatePresence } from 'motion/react';
+
+const PageTransition: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  return (
+    <motion.div
+      initial={{ opacity: 0, scale: 0.98, x: 8 }}
+      animate={{ opacity: 1, scale: 1, x: 0 }}
+      exit={{ opacity: 0, scale: 0.98, x: -8 }}
+      transition={{ 
+        type: 'spring',
+        stiffness: 300,
+        damping: 26,
+        mass: 0.8
+      }}
+      className="w-full flex-1 flex flex-col min-h-full"
+    >
+      {children}
+    </motion.div>
+  );
+};
 
 const NavLink: React.FC<{ to: string; icon: React.ReactNode; label: string }> = ({ to, icon, label }) => {
   const location = useLocation();
@@ -49,6 +69,7 @@ const NavLink: React.FC<{ to: string; icon: React.ReactNode; label: string }> = 
 
 const AppContent: React.FC = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const syncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -1002,14 +1023,16 @@ const AppContent: React.FC = () => {
   return (
     <div className="flex flex-col h-[100dvh] bg-[#F4F7FB] overflow-hidden max-w-md mx-auto shadow-2xl relative font-sans">
       <main className="flex-1 overflow-y-auto no-scrollbar relative">
-        <Routes>
-          <Route path="/" element={<Dashboard assets={assets} accounts={accounts} transactions={transactions} user={user} history={history} onRefresh={handleUpdatePrices} isUpdating={isUpdatingPrices} updateStatus={priceUpdateStatus} lastUpdated={lastUpdated} exchangeRate={dynamicExchangeRate} marketBriefing={marketBriefing} onUpdateBriefing={handleUpdateBriefing} />} />
-          <Route path="/assets" element={<AssetList assets={assets} setAssets={setAssets} onAddAsset={() => setIsManualModalOpen(true)} onDeleteAsset={(id) => setDeletingAsset(assets.find(a=>a.id===id)||null)} onEditAsset={(a) => { setEditingAsset(a); setIsManualModalOpen(true); }} onSync={() => handleSync('SMART')} onRefreshPrices={handleUpdatePrices} isRefreshing={isUpdatingPrices} exchangeRate={dynamicExchangeRate} accounts={accounts} />} />
-          <Route path="/advisor" element={<AIAdvisor assets={assets} accounts={accounts} onApplyRebalancing={() => {}} exchangeRate={dynamicExchangeRate} user={user} onUpdateUser={setUser} savedStrategies={savedStrategies} onSaveStrategy={handleSaveAIStrategy} onDeleteStrategy={handleDeleteAIStrategy} showToast={showToast} />} />
-          <Route path="/history" element={<TransactionHistory transactions={transactions} accounts={accounts} onDelete={handleDeleteTransaction} onEdit={(tx) => { setEditingTransaction(tx); setIsTransactionModalOpen(true); }} onUpdate={performDataUpdateAndSync} onAdd={() => setIsTransactionModalOpen(true)} exchangeRate={dynamicExchangeRate} />} />
-          <Route path="/analytics" element={<AnalyticsView history={history} assets={assets} exchangeRate={dynamicExchangeRate} />} />
-          <Route path="/accounts" element={<AccountManager accounts={accounts} setAccounts={setAccounts} assets={assets} exchangeRate={dynamicExchangeRate} onAdjustBalance={handleAccountBalanceAdjustment} />} />
-        </Routes>
+        <AnimatePresence mode="wait">
+          <Routes location={location} key={location.pathname}>
+            <Route path="/" element={<PageTransition><Dashboard assets={assets} accounts={accounts} transactions={transactions} user={user} history={history} onRefresh={handleUpdatePrices} isUpdating={isUpdatingPrices} updateStatus={priceUpdateStatus} lastUpdated={lastUpdated} exchangeRate={dynamicExchangeRate} marketBriefing={marketBriefing} onUpdateBriefing={handleUpdateBriefing} /></PageTransition>} />
+            <Route path="/assets" element={<PageTransition><AssetList assets={assets} setAssets={setAssets} onAddAsset={() => setIsManualModalOpen(true)} onDeleteAsset={(id) => setDeletingAsset(assets.find(a=>a.id===id)||null)} onEditAsset={(a) => { setEditingAsset(a); setIsManualModalOpen(true); }} onSync={() => handleSync('SMART')} onRefreshPrices={handleUpdatePrices} isRefreshing={isUpdatingPrices} exchangeRate={dynamicExchangeRate} accounts={accounts} /></PageTransition>} />
+            <Route path="/advisor" element={<PageTransition><AIAdvisor assets={assets} accounts={accounts} onApplyRebalancing={() => {}} exchangeRate={dynamicExchangeRate} user={user} onUpdateUser={setUser} savedStrategies={savedStrategies} onSaveStrategy={handleSaveAIStrategy} onDeleteStrategy={handleDeleteAIStrategy} showToast={showToast} /></PageTransition>} />
+            <Route path="/history" element={<PageTransition><TransactionHistory transactions={transactions} accounts={accounts} onDelete={handleDeleteTransaction} onEdit={(tx) => { setEditingTransaction(tx); setIsTransactionModalOpen(true); }} onUpdate={performDataUpdateAndSync} onAdd={() => setIsTransactionModalOpen(true)} exchangeRate={dynamicExchangeRate} /></PageTransition>} />
+            <Route path="/analytics" element={<PageTransition><AnalyticsView history={history} assets={assets} exchangeRate={dynamicExchangeRate} /></PageTransition>} />
+            <Route path="/accounts" element={<PageTransition><AccountManager accounts={accounts} setAccounts={setAccounts} assets={assets} exchangeRate={dynamicExchangeRate} onAdjustBalance={handleAccountBalanceAdjustment} /></PageTransition>} />
+          </Routes>
+        </AnimatePresence>
       </main>
 
       {isManualModalOpen && <ManualAssetEntry onClose={() => { setIsManualModalOpen(false); setEditingAsset(undefined); }} onSave={handleSaveAsset} asset={editingAsset} accounts={accounts} exchangeRate={dynamicExchangeRate} />}

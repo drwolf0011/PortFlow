@@ -42,6 +42,28 @@ const Dashboard: React.FC<DashboardProps> = ({ assets, accounts, user, onRefresh
   const [isRiskModalOpen, setIsRiskModalOpen] = useState(false);
   const [compTab, setCompTab] = useState<'TYPE' | 'INST' | 'CURRENCY' | 'TICKER' | 'ACCOUNT_TYPE'>('TYPE');
   const [isBriefingLoading, setIsBriefingLoading] = useState(false);
+  const [activePieIdx, setActivePieIdx] = useState<number | null>(null);
+
+  const CustomPieTooltip = ({ active, payload }: any) => {
+    if (active && payload && payload.length) {
+      const data = payload[0].payload;
+      const index = pieChartData.findIndex(d => d.name === data.name);
+      const color = COLORS[index % COLORS.length] || '#6366f1';
+      return (
+        <div className="bg-slate-900/95 backdrop-blur-md px-4 py-3 rounded-2xl shadow-xl border border-slate-800 flex flex-col gap-1.5 animate-in fade-in zoom-in-95 duration-150 z-50 text-white min-w-[140px]">
+          <div className="flex items-center gap-2">
+            <div className="w-2.5 h-2.5 rounded-full ring-2 ring-white/20" style={{ backgroundColor: color }} />
+            <span className="text-[11px] font-black tracking-tight leading-none text-slate-100">{data.name}</span>
+          </div>
+          <div className="flex flex-col mt-1">
+            <span className="text-[13px] font-black text-indigo-300 leading-none">{Math.floor(data.value).toLocaleString()}원</span>
+            <span className="text-[9px] font-bold text-slate-400 mt-1">비중 {((data.value / (stats.total || 1)) * 100).toFixed(1)}%</span>
+          </div>
+        </div>
+      );
+    }
+    return null;
+  };
 
   const handleFetchBriefing = async () => {
     if (isBriefingLoading) return;
@@ -332,34 +354,74 @@ const Dashboard: React.FC<DashboardProps> = ({ assets, accounts, user, onRefresh
             </div>
           </div>
 
-          <div className="h-64 w-full relative">
+           <div className="h-64 w-full relative">
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
+                <defs>
+                  {/* Neon radial glow mappings */}
+                  <linearGradient id="grad-0" x1="0" y1="0" x2="1" y2="1">
+                    <stop offset="0%" stopColor="#818cf8" />
+                    <stop offset="100%" stopColor="#4f46e5" />
+                  </linearGradient>
+                  <linearGradient id="grad-1" x1="0" y1="0" x2="1" y2="1">
+                    <stop offset="0%" stopColor="#34d399" />
+                    <stop offset="100%" stopColor="#059669" />
+                  </linearGradient>
+                  <linearGradient id="grad-2" x1="0" y1="0" x2="1" y2="1">
+                    <stop offset="0%" stopColor="#fbbf24" />
+                    <stop offset="100%" stopColor="#d97706" />
+                  </linearGradient>
+                  <linearGradient id="grad-3" x1="0" y1="0" x2="1" y2="1">
+                    <stop offset="0%" stopColor="#f472b6" />
+                    <stop offset="100%" stopColor="#db2777" />
+                  </linearGradient>
+                  <linearGradient id="grad-4" x1="0" y1="0" x2="1" y2="1">
+                    <stop offset="0%" stopColor="#a78bfa" />
+                    <stop offset="100%" stopColor="#7c3aed" />
+                  </linearGradient>
+                  <linearGradient id="grad-5" x1="0" y1="0" x2="1" y2="1">
+                    <stop offset="0%" stopColor="#94a3b8" />
+                    <stop offset="100%" stopColor="#475569" />
+                  </linearGradient>
+                  <linearGradient id="grad-6" x1="0" y1="0" x2="1" y2="1">
+                    <stop offset="0%" stopColor="#2dd4bf" />
+                    <stop offset="100%" stopColor="#0d9488" />
+                  </linearGradient>
+                  <linearGradient id="grad-7" x1="0" y1="0" x2="1" y2="1">
+                    <stop offset="0%" stopColor="#f43f5e" />
+                    <stop offset="100%" stopColor="#be123c" />
+                  </linearGradient>
+                  <filter id="pie-glow-filter" x="-20%" y="-20%" width="140%" height="140%">
+                    <feDropShadow dx="0" dy="4" stdDeviation="6" floodColor="#4f46e5" floodOpacity="0.1" />
+                  </filter>
+                </defs>
                 <Pie
                   data={pieChartData}
                   innerRadius={65}
                   outerRadius={85}
-                  paddingAngle={5}
+                  paddingAngle={4}
                   dataKey="value"
                   stroke="none"
                   animationDuration={1000}
                 >
                   {pieChartData.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                    <Cell 
+                      key={`cell-${index}`} 
+                      fill={`url(#grad-${index % COLORS.length})`}
+                      onMouseEnter={() => { setActivePieIdx(index); triggerHaptic('light'); }}
+                      onMouseLeave={() => setActivePieIdx(null)}
+                      style={{
+                        transition: 'transform 0.3s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.3s ease',
+                        cursor: 'pointer',
+                        transform: activePieIdx === index ? 'scale(1.04)' : 'scale(1)',
+                        transformOrigin: '50% 50%',
+                        opacity: activePieIdx === null || activePieIdx === index ? 1 : 0.65,
+                        filter: activePieIdx === index ? 'url(#pie-glow-filter)' : 'none'
+                      }}
+                    />
                   ))}
                 </Pie>
-                <Tooltip 
-                  contentStyle={{ 
-                    backgroundColor: '#ffffff',
-                    borderRadius: '1.2rem', 
-                    border: 'none', 
-                    boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)', 
-                    padding: '12px 16px',
-                    zIndex: 100
-                  }}
-                  itemStyle={{ fontSize: '12px', fontWeight: '900', color: '#1e293b' }}
-                  formatter={(value: number, name: string) => [`${Math.floor(value).toLocaleString()}원`, name]}
-                />
+                <Tooltip content={<CustomPieTooltip />} />
               </PieChart>
             </ResponsiveContainer>
           </div>

@@ -1,5 +1,6 @@
 {
   "name": "PortFlow",
   "description": "내 손안의 AI 자산관리 비서. 모든 자산을 한눈에 파악하고 AI 제안으로 스마트하게 투자하세요.",
-  "requestFramePermissions": []
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

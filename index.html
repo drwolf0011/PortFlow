@@ -100,6 +100,77 @@
         .duration-200 { animation-duration: 0.2s; }
         .duration-300 { animation-duration: 0.3s; }
         .duration-500 { animation-duration: 0.5s; }
+
+        /* Core Fallback & Premium Markdown/Prose Styling for AI Reports */
+        .prose {
+            text-align: left;
+            word-break: keep-all;
+            overflow-wrap: break-word;
+        }
+        .prose h1, .prose h2, .prose h3, .prose h4, .prose h5, .prose h6 {
+            color: #1e293b;
+            font-weight: 800;
+            margin-top: 1.5rem;
+            margin-bottom: 0.75rem;
+            line-height: 1.35;
+        }
+        .prose h1 { font-size: 1.4rem; border-b: 2px solid #e2e8f0; padding-bottom: 0.5rem; }
+        .prose h2 { font-size: 1.25rem; border-b: 1px solid #f1f5f9; padding-bottom: 0.35rem; }
+        .prose h3 { font-size: 1.1rem; color: #4f46e5; margin-top: 1.25rem; } /* Indigo theme */
+        .prose h4 { font-size: 1.0rem; }
+        .prose p {
+            margin-top: 0.5rem;
+            margin-bottom: 0.875rem;
+            line-height: 1.6;
+            color: #334155; /* Slate-700 */
+            font-size: 0.875rem;
+        }
+        .prose ul {
+            list-style-type: disc !important;
+            padding-left: 1.25rem !important;
+            margin-top: 0.5rem;
+            margin-bottom: 0.875rem;
+        }
+        .prose ol {
+            list-style-type: decimal !important;
+            padding-left: 1.25rem !important;
+            margin-top: 0.5rem;
+            margin-bottom: 0.875rem;
+        }
+        .prose li {
+            margin-top: 0.25rem;
+            margin-bottom: 0.25rem;
+            line-height: 1.5;
+            color: #334155;
+            font-size: 0.875rem;
+        }
+        .prose li::marker {
+            color: #6366f1; /* Beautiful Indigo bullet color */
+        }
+        .prose strong {
+            font-weight: 700;
+            color: #0f172a; /* Slate-900 */
+        }
+        .prose code {
+            font-family: monospace;
+            background-color: #f1f5f9;
+            padding: 0.125rem 0.25rem;
+            border-radius: 0.25rem;
+            font-size: 0.85em;
+            color: #e11d48; /* code highlight */
+        }
+        .prose blockquote {
+            border-left: 4px solid #6366f1;
+            padding-left: 1rem;
+            color: #475569;
+            font-style: italic;
+            margin: 1rem 0;
+        }
+        .prose hr {
+            border: 0;
+            border-top: 1px solid #e2e8f0;
+            margin: 1.5rem 0;
+        }
     </style>
 <script type="importmap">
 {
