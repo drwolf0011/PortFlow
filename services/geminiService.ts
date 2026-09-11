@@ -186,7 +186,33 @@ async function generateContentWithRetry(params: any, useQueue = true): Promise<G
         return await ai.models.generateContent(params);
       } catch (error: any) {
         lastError = error;
-        const status = error.status || error.code || 0;
+        let status = error.status || error.code || 0;
+        let errMsg = error.message || '';
+        
+        if (error.error && typeof error.error === 'object') {
+          status = error.error.code || error.error.status || status;
+          errMsg = error.error.message || errMsg;
+        }
+        
+        if (!status && errMsg.includes('403')) status = 403;
+        if (!status && errMsg.includes('PERMISSION_DENIED')) status = 403;
+        
+        // Handle 403 PERMISSION_DENIED which often happens when googleSearch is not allowed for the API key
+        if (status === 403 && params.config?.tools?.some((t: any) => t.googleSearch)) {
+          console.warn(`[Gemini API] 403 Permission Denied. Removing googleSearch tool and retrying...`);
+          params = { ...params };
+          if (params.config) {
+            params.config = { ...params.config };
+            if (params.config.tools) {
+              params.config.tools = params.config.tools.filter((t: any) => !t.googleSearch);
+              if (params.config.tools.length === 0) {
+                delete params.config.tools;
+              }
+            }
+          }
+          continue;
+        }
+
         if (status === 429 || status === 500 || status === 503 || error.message?.includes('xhr') || error.message?.includes('quota')) {
           const waitTime = (5000 * Math.pow(2.2, i)) + (Math.random() * 2000);
           console.warn(`[Gemini API] Request failed (${status}). Retrying in ${Math.round(waitTime/1000)}s...`);

@@ -81,7 +81,8 @@ export const fetchUsersRegistry = async (url: string, key: string): Promise<User
 
     return { users };
   } catch (error: any) {
-    throw new Error(`사용자 목록 로드 실패: ${error.message}`);
+    const isNetworkError = error.message?.includes('Failed to fetch') || error.message?.includes('Network');
+    throw new CloudAuthError(isNetworkError ? '네트워크 오류로 서버에 연결할 수 없습니다.' : `사용자 목록 로드 실패: ${error.message}`);
   }
 };
 
@@ -102,125 +103,129 @@ export const registerUser = async (url: string, key: string, user: UserProfile):
 export const loadUserData = async (url: string, key: string, userId: string): Promise<AppData> => {
   const supabase = getClient(url, key);
 
-  // Parallel Fetch
-  const [
-    userRes,
-    accountsRes,
-    assetsRes,
-    txRes,
-    historyRes,
-    strategiesRes
-  ] = await Promise.all([
-    supabase.from('users').select('*').eq('user_id', userId).single(),
-    supabase.from('accounts').select('*').eq('user_id', userId),
-    supabase.from('assets').select('*').eq('user_id', userId),
-    supabase.from('transactions').select('*').eq('user_id', userId),
-    supabase.from('portfolio_history').select('*').eq('user_id', userId).order('date', { ascending: true }),
-    supabase.from('saved_strategies').select('*').eq('user_id', userId).order('created_at', { ascending: false })
-  ]);
+  try {
+    const [
+      userRes,
+      accountsRes,
+      assetsRes,
+      txRes,
+      historyRes,
+      strategiesRes
+    ] = await Promise.all([
+      supabase.from('users').select('*').eq('user_id', userId).single(),
+      supabase.from('accounts').select('*').eq('user_id', userId),
+      supabase.from('assets').select('*').eq('user_id', userId),
+      supabase.from('transactions').select('*').eq('user_id', userId),
+      supabase.from('portfolio_history').select('*').eq('user_id', userId).order('date', { ascending: true }),
+      supabase.from('saved_strategies').select('*').eq('user_id', userId).order('created_at', { ascending: false })
+    ]);
 
-  if (userRes.error) throw new Error(`사용자 정보 로드 실패: ${userRes.error.message}`);
+    if (userRes.error) throw new Error(userRes.error.message);
 
-  // Reconstruct AppData
-  const user: UserProfile = {
-    id: userRes.data.user_id,
-    name: userRes.data.name,
-    pin: userRes.data.pin,
-    investmentGoal: userRes.data.investment_goal,
-    goalPrompt: userRes.data.goal_prompt,
-    dataBinId: userRes.data.user_id,
-    cloudSync: { supabaseUrl: url, supabaseKey: key },
-    kisConfig: {
-      appKey: userRes.data.kis_app_key,
-      appSecret: userRes.data.kis_app_secret
+    // Reconstruct AppData
+    const user: UserProfile = {
+      id: userRes.data.user_id,
+      name: userRes.data.name,
+      pin: userRes.data.pin,
+      investmentGoal: userRes.data.investment_goal,
+      goalPrompt: userRes.data.goal_prompt,
+      dataBinId: userRes.data.user_id,
+      cloudSync: { supabaseUrl: url, supabaseKey: key },
+      kisConfig: {
+        appKey: userRes.data.kis_app_key,
+        appSecret: userRes.data.kis_app_secret
+      }
+    };
+
+    const accounts: Account[] = (accountsRes.data || []).map((row: any) => ({
+      id: row.id,
+      institution: row.institution,
+      accountNumber: row.account_number,
+      nickname: row.nickname,
+      type: row.type,
+      isHidden: row.is_hidden,
+      balance: row.balance ? parseFloat(row.balance) : 0,
+      balanceUSD: row.balance_usd ? parseFloat(row.balance_usd) : 0
+    }));
+
+    const assets: Asset[] = (assetsRes.data || []).map((row: any) => ({
+      id: row.id,
+      accountId: row.account_id,
+      name: row.name,
+      ticker: row.ticker,
+      exchange: row.exchange,
+      type: row.type,
+      institution: row.institution,
+      quantity: parseFloat(row.quantity),
+      purchasePrice: parseFloat(row.purchase_price),
+      purchasePriceKRW: row.purchase_price_krw ? parseFloat(row.purchase_price_krw) : undefined,
+      currentPrice: parseFloat(row.current_price),
+      currency: row.currency,
+      managementType: row.management_type,
+      realizedProfit: row.realized_profit ? parseFloat(row.realized_profit) : 0,
+      realizedProfitKRW: row.realized_profit_krw ? parseFloat(row.realized_profit_krw) : 0
+    }));
+
+    const transactions: Transaction[] = (txRes.data || []).map((row: any) => ({
+      id: row.id,
+      assetId: row.asset_id,
+      accountId: row.account_id,
+      date: row.date,
+      type: row.type,
+      assetType: row.asset_type,
+      institution: row.institution,
+      name: row.name,
+      quantity: parseFloat(row.quantity),
+      price: parseFloat(row.price),
+      currency: row.currency,
+      exchangeRate: row.exchange_rate ? parseFloat(row.exchange_rate) : 1350,
+      ticker: row.ticker,
+      exchange: row.exchange
+    }));
+
+    const history = (historyRes.data || []).map((row: any) => ({
+      date: row.date,
+      value: parseFloat(row.value),
+      exchangeRate: row.exchange_rate ? parseFloat(row.exchange_rate) : undefined
+    }));
+
+    const savedStrategies: SavedStrategy[] = (strategiesRes.data || []).map((row: any) => ({
+      id: row.id,
+      createdAt: parseInt(row.created_at) || Date.now(),
+      name: row.name,
+      diagnosis: row.diagnosis,
+      strategy: row.strategy
+    }));
+
+    // Find the most recent exchange rate from history records to avoid 1350 hardcoding
+    let restoredExchangeRate = 1350;
+    if (history.length > 0) {
+      const sortedHistory = [...history].sort((a, b) => b.date.localeCompare(a.date));
+      if (sortedHistory[0].exchangeRate) {
+        restoredExchangeRate = sortedHistory[0].exchangeRate;
+      }
     }
-  };
 
-  const accounts: Account[] = (accountsRes.data || []).map((row: any) => ({
-    id: row.id,
-    institution: row.institution,
-    accountNumber: row.account_number,
-    nickname: row.nickname,
-    type: row.type,
-    isHidden: row.is_hidden,
-    balance: row.balance ? parseFloat(row.balance) : 0,
-    balanceUSD: row.balance_usd ? parseFloat(row.balance_usd) : 0
-  }));
+    // Use the database's updated_at as the official lastUpdated string
+    const dbUpdatedTime = userRes.data.updated_at;
+    const lastUpdatedStr = dbUpdatedTime ? new Date(dbUpdatedTime).toLocaleString() : new Date().toLocaleString();
 
-  const assets: Asset[] = (assetsRes.data || []).map((row: any) => ({
-    id: row.id,
-    accountId: row.account_id,
-    name: row.name,
-    ticker: row.ticker,
-    exchange: row.exchange,
-    type: row.type,
-    institution: row.institution,
-    quantity: parseFloat(row.quantity),
-    purchasePrice: parseFloat(row.purchase_price),
-    purchasePriceKRW: row.purchase_price_krw ? parseFloat(row.purchase_price_krw) : undefined,
-    currentPrice: parseFloat(row.current_price),
-    currency: row.currency,
-    managementType: row.management_type,
-    realizedProfit: row.realized_profit ? parseFloat(row.realized_profit) : 0,
-    realizedProfitKRW: row.realized_profit_krw ? parseFloat(row.realized_profit_krw) : 0
-  }));
-
-  const transactions: Transaction[] = (txRes.data || []).map((row: any) => ({
-    id: row.id,
-    assetId: row.asset_id,
-    accountId: row.account_id,
-    date: row.date,
-    type: row.type,
-    assetType: row.asset_type,
-    institution: row.institution,
-    name: row.name,
-    quantity: parseFloat(row.quantity),
-    price: parseFloat(row.price),
-    currency: row.currency,
-    exchangeRate: row.exchange_rate ? parseFloat(row.exchange_rate) : 1350,
-    ticker: row.ticker,
-    exchange: row.exchange
-  }));
-
-  const history = (historyRes.data || []).map((row: any) => ({
-    date: row.date,
-    value: parseFloat(row.value),
-    exchangeRate: row.exchange_rate ? parseFloat(row.exchange_rate) : undefined
-  }));
-
-  const savedStrategies: SavedStrategy[] = (strategiesRes.data || []).map((row: any) => ({
-    id: row.id,
-    createdAt: parseInt(row.created_at) || Date.now(),
-    name: row.name,
-    diagnosis: row.diagnosis,
-    strategy: row.strategy
-  }));
-
-  // Find the most recent exchange rate from history records to avoid 1350 hardcoding
-  let restoredExchangeRate = 1350;
-  if (history.length > 0) {
-    const sortedHistory = [...history].sort((a, b) => b.date.localeCompare(a.date));
-    if (sortedHistory[0].exchangeRate) {
-      restoredExchangeRate = sortedHistory[0].exchangeRate;
-    }
+    return {
+      user,
+      accounts,
+      assets,
+      transactions,
+      history,
+      savedStrategies,
+      lastUpdated: lastUpdatedStr,
+      exchangeRate: restoredExchangeRate,
+      timestamp: dbUpdatedTime ? new Date(dbUpdatedTime).getTime() : Date.now(),
+      marketBriefing: userRes.data.market_briefing
+    };
+  } catch (error: any) {
+    const isNetworkError = error.message?.includes('Failed to fetch') || error.message?.includes('Network');
+    throw new CloudAuthError(isNetworkError ? '네트워크 오류로 서버에 연결할 수 없습니다.' : `데이터 불러오기 실패: ${error.message}`);
   }
-
-  // Use the database's updated_at as the official lastUpdated string
-  const dbUpdatedTime = userRes.data.updated_at;
-  const lastUpdatedStr = dbUpdatedTime ? new Date(dbUpdatedTime).toLocaleString() : new Date().toLocaleString();
-
-  return {
-    user,
-    accounts,
-    assets,
-    transactions,
-    history,
-    savedStrategies,
-    lastUpdated: lastUpdatedStr,
-    exchangeRate: restoredExchangeRate,
-    timestamp: dbUpdatedTime ? new Date(dbUpdatedTime).getTime() : Date.now(),
-    marketBriefing: userRes.data.market_briefing
-  };
 };
 
 // 데이터 저장하기 (Upsert Normalized Data)
@@ -231,192 +236,206 @@ export const saveUserData = async (url: string, key: string, data: AppData): Pro
 
   const syncTimestamp = new Date().toISOString();
 
-  // 1. Upsert User
-  const { error: userError } = await supabase.from('users').upsert({
-    user_id: userId,
-    name: data.user?.name,
-    pin: data.user?.pin,
-    investment_goal: data.user?.investmentGoal,
-    goal_prompt: data.user?.goalPrompt,
-    // Ensure marketBriefing is stored as a proper JSON object, and has content
-    market_briefing: (data.marketBriefing && data.marketBriefing.content) ? data.marketBriefing : null,
-    kis_app_key: data.user?.kisConfig?.appKey,
-    kis_app_secret: data.user?.kisConfig?.appSecret,
-    updated_at: syncTimestamp
-  });
-  if (userError) throw new Error(`User Save Error: ${userError.message}`);
+  try {
+    // 1. Upsert User
+    const { error: userError } = await supabase.from('users').upsert({
+      user_id: userId,
+      name: data.user?.name,
+      pin: data.user?.pin,
+      investment_goal: data.user?.investmentGoal,
+      goal_prompt: data.user?.goalPrompt,
+      // Ensure marketBriefing is stored as a proper JSON object, and has content
+      market_briefing: (data.marketBriefing && data.marketBriefing.content) ? data.marketBriefing : null,
+      kis_app_key: data.user?.kisConfig?.appKey,
+      kis_app_secret: data.user?.kisConfig?.appSecret,
+      updated_at: syncTimestamp
+    });
+    if (userError) throw new Error(`User Save Error: ${userError.message}`);
 
-  // 2. Sync Accounts (Delete missing, Upsert existing)
-  const incomingAccountIds = data.accounts.map(a => a.id);
-  if (incomingAccountIds.length > 0) {
-    await supabase.from('accounts').delete().eq('user_id', userId).not('id', 'in', incomingAccountIds);
-    const { error } = await supabase.from('accounts').upsert(
-      data.accounts.map(a => ({
-        id: a.id,
-        user_id: userId,
-        institution: a.institution,
-        account_number: a.accountNumber,
-        nickname: a.nickname,
-        type: a.type,
-        is_hidden: a.isHidden,
-        balance: a.balance || 0,
-        balance_usd: a.balanceUSD || 0,
-        updated_at: syncTimestamp
-      }))
-    );
-    if (error) console.error("Accounts Save Error", error);
-  } else {
-    await supabase.from('accounts').delete().eq('user_id', userId);
-  }
+    // 2. Sync Accounts (Delete missing, Upsert existing)
+    const incomingAccountIds = data.accounts.map(a => a.id);
+    if (incomingAccountIds.length > 0) {
+      await supabase.from('accounts').delete().eq('user_id', userId).not('id', 'in', incomingAccountIds);
+      const { error } = await supabase.from('accounts').upsert(
+        data.accounts.map(a => ({
+          id: a.id,
+          user_id: userId,
+          institution: a.institution,
+          account_number: a.accountNumber,
+          nickname: a.nickname,
+          type: a.type,
+          is_hidden: a.isHidden,
+          balance: a.balance || 0,
+          balance_usd: a.balanceUSD || 0,
+          updated_at: syncTimestamp
+        }))
+      );
+      if (error) console.error("Accounts Save Error", error);
+    } else {
+      await supabase.from('accounts').delete().eq('user_id', userId);
+    }
 
-  // 3. Sync Assets (Delete missing, Upsert existing)
-  const incomingAssetIds = data.assets.map(a => a.id);
-  if (incomingAssetIds.length > 0) {
-    await supabase.from('assets').delete().eq('user_id', userId).not('id', 'in', incomingAssetIds);
-    const { error } = await supabase.from('assets').upsert(
-      data.assets.map(a => ({
-        id: a.id,
-        user_id: userId,
-        account_id: a.accountId,
-        name: a.name,
-        ticker: a.ticker,
-        exchange: a.exchange,
-        type: a.type,
-        institution: a.institution,
-        quantity: a.quantity,
-        purchase_price: a.purchasePrice,
-        purchase_price_krw: a.purchasePriceKRW,
-        current_price: a.currentPrice,
-        currency: a.currency,
-        management_type: a.managementType,
-        realized_profit: a.realizedProfit || 0,
-        realized_profit_krw: a.realizedProfitKRW || 0,
-        updated_at: syncTimestamp
-      }))
-    );
-    if (error) console.error("Assets Save Error", error);
-  } else {
-    await supabase.from('assets').delete().eq('user_id', userId);
-  }
+    // 3. Sync Assets (Delete missing, Upsert existing)
+    const incomingAssetIds = data.assets.map(a => a.id);
+    if (incomingAssetIds.length > 0) {
+      await supabase.from('assets').delete().eq('user_id', userId).not('id', 'in', incomingAssetIds);
+      const { error } = await supabase.from('assets').upsert(
+        data.assets.map(a => ({
+          id: a.id,
+          user_id: userId,
+          account_id: a.accountId,
+          name: a.name,
+          ticker: a.ticker,
+          exchange: a.exchange,
+          type: a.type,
+          institution: a.institution,
+          quantity: a.quantity,
+          purchase_price: a.purchasePrice,
+          purchase_price_krw: a.purchasePriceKRW,
+          current_price: a.currentPrice,
+          currency: a.currency,
+          management_type: a.managementType,
+          realized_profit: a.realizedProfit || 0,
+          realized_profit_krw: a.realizedProfitKRW || 0,
+          updated_at: syncTimestamp
+        }))
+      );
+      if (error) console.error("Assets Save Error", error);
+    } else {
+      await supabase.from('assets').delete().eq('user_id', userId);
+    }
 
-  // 4. Sync Transactions (Delete missing, Upsert existing)
-  const incomingTxIds = data.transactions.map(t => t.id);
-  if (incomingTxIds.length > 0) {
-    await supabase.from('transactions').delete().eq('user_id', userId).not('id', 'in', incomingTxIds);
-    const { error } = await supabase.from('transactions').upsert(
-      data.transactions.map(t => ({
-        id: t.id,
-        user_id: userId,
-        asset_id: t.assetId,
-        account_id: t.accountId,
-        date: t.date,
-        type: t.type,
-        asset_type: t.assetType,
-        institution: t.institution,
-        name: t.name,
-        quantity: t.quantity,
-        price: t.price,
-        currency: t.currency,
-        exchange_rate: t.exchangeRate,
-        ticker: t.ticker,
-        exchange: t.exchange,
-        updated_at: syncTimestamp
-      }))
-    );
-    if (error) console.error("Transactions Save Error", error);
-  } else {
-    await supabase.from('transactions').delete().eq('user_id', userId);
-  }
+    // 4. Sync Transactions (Delete missing, Upsert existing)
+    const incomingTxIds = data.transactions.map(t => t.id);
+    if (incomingTxIds.length > 0) {
+      await supabase.from('transactions').delete().eq('user_id', userId).not('id', 'in', incomingTxIds);
+      const { error } = await supabase.from('transactions').upsert(
+        data.transactions.map(t => ({
+          id: t.id,
+          user_id: userId,
+          asset_id: t.assetId,
+          account_id: t.accountId,
+          date: t.date,
+          type: t.type,
+          asset_type: t.assetType,
+          institution: t.institution,
+          name: t.name,
+          quantity: t.quantity,
+          price: t.price,
+          currency: t.currency,
+          exchange_rate: t.exchangeRate,
+          ticker: t.ticker,
+          exchange: t.exchange,
+          updated_at: syncTimestamp
+        }))
+      );
+      if (error) console.error("Transactions Save Error", error);
+    } else {
+      await supabase.from('transactions').delete().eq('user_id', userId);
+    }
 
-  // 5. Upsert History
-  if (data.history.length > 0) {
-    const { error } = await supabase.from('portfolio_history').upsert(
-      data.history.map(h => ({
-        user_id: userId,
-        date: h.date,
-        value: h.value,
-        exchange_rate: h.exchangeRate,
-        updated_at: syncTimestamp // Record the precise time of this data point update
-      })),
-      { onConflict: 'user_id,date' }
-    );
-    if (error) console.error("History Save Error", error);
-  }
+    // 5. Upsert History
+    if (data.history.length > 0) {
+      const { error } = await supabase.from('portfolio_history').upsert(
+        data.history.map(h => ({
+          user_id: userId,
+          date: h.date,
+          value: h.value,
+          exchange_rate: h.exchangeRate,
+          updated_at: syncTimestamp // Record the precise time of this data point update
+        })),
+        { onConflict: 'user_id,date' }
+      );
+      if (error) console.error("History Save Error", error);
+    }
 
-  // 6. Sync Strategies
-  const incomingStrategyIds = (data.savedStrategies || []).map(s => s.id);
-  if (incomingStrategyIds.length > 0) {
-    await supabase.from('saved_strategies').delete().eq('user_id', userId).not('id', 'in', incomingStrategyIds);
-    const { error } = await supabase.from('saved_strategies').upsert(
-      data.savedStrategies!.map(s => ({
-        id: s.id,
-        user_id: userId,
-        name: s.name,
-        created_at: s.createdAt,
-        diagnosis: s.diagnosis,
-        strategy: s.strategy
-      }))
-    );
-    if (error) console.error("Strategies Save Error", error);
-  } else {
-    await supabase.from('saved_strategies').delete().eq('user_id', userId);
+    // 6. Sync Strategies
+    const incomingStrategyIds = (data.savedStrategies || []).map(s => s.id);
+    if (incomingStrategyIds.length > 0) {
+      await supabase.from('saved_strategies').delete().eq('user_id', userId).not('id', 'in', incomingStrategyIds);
+      const { error } = await supabase.from('saved_strategies').upsert(
+        data.savedStrategies!.map(s => ({
+          id: s.id,
+          user_id: userId,
+          name: s.name,
+          created_at: s.createdAt,
+          diagnosis: s.diagnosis,
+          strategy: s.strategy
+        }))
+      );
+      if (error) console.error("Strategies Save Error", error);
+    } else {
+      await supabase.from('saved_strategies').delete().eq('user_id', userId);
+    }
+  } catch (error: any) {
+    const isNetworkError = error.message?.includes('Failed to fetch') || error.message?.includes('Network');
+    throw new CloudAuthError(isNetworkError ? '네트워크 오류로 서버에 연결할 수 없습니다.' : error.message);
   }
 };
 
 // --- KIS Token Management ---
 
 export const saveKisToken = async (url: string, key: string, userId: string, token: string, expiresAt: string, isVirtual: boolean): Promise<void> => {
-  const supabase = getClient(url, key);
-  
-  // 1. Get existing tokens first to preserve the other environment's token
-  const { data: userData } = await supabase.from('users').select('kis_token').eq('user_id', userId).single();
-  
-  let tokenData: any = {};
-  if (userData?.kis_token) {
-    try {
-      // If it's already a JSON string, parse it
-      tokenData = typeof userData.kis_token === 'string' && userData.kis_token.startsWith('{') 
-        ? JSON.parse(userData.kis_token) 
-        : {};
-    } catch (e) {
-      tokenData = {};
+  try {
+    const supabase = getClient(url, key);
+    
+    // 1. Get existing tokens first to preserve the other environment's token
+    const { data: userData } = await supabase.from('users').select('kis_token').eq('user_id', userId).single();
+    
+    let tokenData: any = {};
+    if (userData?.kis_token) {
+      try {
+        // If it's already a JSON string, parse it
+        tokenData = typeof userData.kis_token === 'string' && userData.kis_token.startsWith('{') 
+          ? JSON.parse(userData.kis_token) 
+          : {};
+      } catch (e) {
+        tokenData = {};
+      }
     }
+
+    const envKey = isVirtual ? 'VIRTUAL' : 'REAL';
+    tokenData[envKey] = { token, expiresAt };
+
+    const { error } = await supabase.from('users').update({
+      kis_token: JSON.stringify(tokenData),
+      kis_token_expires_at: expiresAt // Keep this for backward compatibility or simple checks
+    }).eq('user_id', userId);
+    
+    if (error) console.error("KIS Token Save Error", error.message);
+  } catch (error: any) {
+    console.error("KIS Token Save Error (Network)", error.message);
   }
-
-  const envKey = isVirtual ? 'VIRTUAL' : 'REAL';
-  tokenData[envKey] = { token, expiresAt };
-
-  const { error } = await supabase.from('users').update({
-    kis_token: JSON.stringify(tokenData),
-    kis_token_expires_at: expiresAt // Keep this for backward compatibility or simple checks
-  }).eq('user_id', userId);
-  
-  if (error) console.error("KIS Token Save Error", error);
 };
 
 export const loadKisToken = async (url: string, key: string, userId: string, isVirtual: boolean): Promise<{ token: string, expiresAt: string } | null> => {
-  const supabase = getClient(url, key);
-  const { data, error } = await supabase.from('users').select('kis_token').eq('user_id', userId).single();
-  
-  if (error || !data || !data.kis_token) return null;
-  
   try {
-    const tokenData = typeof data.kis_token === 'string' && data.kis_token.startsWith('{')
-      ? JSON.parse(data.kis_token)
-      : null;
+    const supabase = getClient(url, key);
+    const { data, error } = await supabase.from('users').select('kis_token').eq('user_id', userId).single();
+    
+    if (error || !data || !data.kis_token) return null;
+    
+    try {
+      const tokenData = typeof data.kis_token === 'string' && data.kis_token.startsWith('{')
+        ? JSON.parse(data.kis_token)
+        : null;
+        
+      if (!tokenData) return null;
       
-    if (!tokenData) return null;
-    
-    const envKey = isVirtual ? 'VIRTUAL' : 'REAL';
-    const envToken = tokenData[envKey];
-    
-    if (!envToken || !envToken.token) return null;
-    
-    return {
-      token: envToken.token,
-      expiresAt: envToken.expiresAt
-    };
-  } catch (e) {
+      const envKey = isVirtual ? 'VIRTUAL' : 'REAL';
+      const envToken = tokenData[envKey];
+      
+      if (!envToken || !envToken.token) return null;
+      
+      return {
+        token: envToken.token,
+        expiresAt: envToken.expiresAt
+      };
+    } catch (e) {
+      return null;
+    }
+  } catch (error: any) {
+    console.error("KIS Token Load Error (Network)", error.message);
     return null;
   }
 };

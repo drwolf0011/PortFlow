@@ -1,6 +1,8 @@
 
 import React, { useState, useMemo, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import ReactMarkdown from 'react-markdown';
+import html2pdf from 'html2pdf.js';
 import { getAIDiagnosis, getAIStrategy, generateGoalPrompt, getStockDeepDive } from '../services/geminiService';
 import { Asset, RebalancingStrategy, Account, UserProfile, DiagnosisResponse, SavedStrategy } from '../types';
 import { 
@@ -47,6 +49,8 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({
   const [deepDiveQuery, setDeepDiveQuery] = useState('');
   const [deepDiveResult, setDeepDiveResult] = useState<{text: string, sources: any[]} | null>(null);
   const [deepDiveLoading, setDeepDiveLoading] = useState(false);
+  const [viewDeepDive, setViewDeepDive] = useState<SavedStrategy | null>(null);
+  const [isExporting, setIsExporting] = useState(false);
 
   const contextHash = useMemo(() => {
     const assetsKey = assets.map(a => `${a.id}-${a.quantity}-${a.currentPrice}`).join('|');
@@ -124,7 +128,7 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({
 
   const handleLoadSaved = (item: SavedStrategy) => {
     setDiagnosis(item.diagnosis || null);
-    setStrategy(item.strategy || null);
+    setStrategy((item.strategy as any) || null);
     setIsArchiveOpen(false);
     showToast(`'${item.name}' 기록을 불러왔습니다.`);
   };
@@ -141,6 +145,120 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({
       alert("목표 설정 중 오류가 발생했습니다."); 
     } finally { 
       setIsWizardProcessing(false); 
+    }
+  };
+
+  const handleSaveDeepDive = () => {
+    if (!deepDiveResult) return;
+    const dateStr = new Date().toLocaleDateString();
+    onSaveStrategy({
+      type: 'STRATEGY',
+      name: `[종목분석] ${deepDiveQuery} (${dateStr})`,
+      diagnosis: { isDeepDive: true, ticker: deepDiveQuery } as any,
+      strategy: deepDiveResult.text as any
+    });
+    showToast(`'${deepDiveQuery}' 분석 결과가 보관함에 저장되었습니다.`);
+  };
+
+  const handleDownloadPDF = async () => {
+    if (!viewDeepDive) return;
+    setIsExporting(true);
+
+    const printContent = document.getElementById('deep-dive-pdf-content');
+    if (!printContent) {
+      setIsExporting(false);
+      return;
+    }
+
+    const container = document.createElement('div');
+    const dateStr = new Date(viewDeepDive.createdAt).toLocaleDateString();
+
+    container.innerHTML = `
+      <div style="padding: 20px; font-family: sans-serif;">
+        <div style="margin-bottom: 20px; border-bottom: 2px solid #f1f5f9; padding-bottom: 10px;">
+          <h1 style="font-size: 24px; font-weight: 800; color: #1e293b; margin: 0;">${viewDeepDive.name}</h1>
+          <p style="color: #64748b; font-size: 14px; margin-top: 8px;">분석 일자: ${dateStr}</p>
+        </div>
+        ${printContent.innerHTML}
+      </div>
+    `;
+
+    const opt = {
+      margin:       10, // mm
+      filename:     `${viewDeepDive.name.replace(/\s+/g, '_')}_분석보고서.pdf`,
+      image:        { type: 'jpeg' as const, quality: 0.98 },
+      html2canvas:  { scale: 2, useCORS: true },
+      jsPDF:        { unit: 'mm', format: 'a4', orientation: 'portrait' as const },
+      pagebreak:    { mode: ['avoid-all', 'css', 'legacy'] }
+    };
+
+    try {
+      await html2pdf().set(opt).from(container).save();
+    } catch (error) {
+      console.error('PDF generation failed:', error);
+      alert('PDF 변환 중 오류가 발생했습니다.');
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  const handleDownloadStrategyPDF = async () => {
+    setIsExporting(true);
+    const printContent = document.getElementById('strategy-report-content');
+    if (!printContent) {
+      setIsExporting(false);
+      return;
+    }
+
+    const container = document.createElement('div');
+    const dateStr = new Date().toLocaleDateString();
+    
+    const clone = printContent.cloneNode(true) as HTMLElement;
+    const buttons = clone.querySelectorAll('button');
+    buttons.forEach(b => b.remove());
+
+    container.innerHTML = `
+      <div style="padding: 20px; font-family: sans-serif;">
+        <div style="margin-bottom: 20px; border-bottom: 2px solid #f1f5f9; padding-bottom: 10px;">
+          <h1 style="font-size: 24px; font-weight: 800; color: #1e293b; margin: 0;">포트폴리오 전략 보고서</h1>
+          <p style="color: #64748b; font-size: 14px; margin-top: 8px;">분석 일자: ${dateStr}</p>
+        </div>
+        ${clone.innerHTML}
+      </div>
+    `;
+
+    const opt = {
+      margin:       10,
+      filename:     `포트폴리오_전략보고서_${dateStr.replace(/\s+/g, '')}.pdf`,
+      image:        { type: 'jpeg' as const, quality: 0.98 },
+      html2canvas:  { scale: 2, useCORS: true },
+      jsPDF:        { unit: 'mm', format: 'a4', orientation: 'portrait' as const },
+      pagebreak:    { mode: ['avoid-all', 'css', 'legacy'] }
+    };
+
+    try {
+      await html2pdf().set(opt).from(container).save();
+    } catch (error) {
+      console.error('PDF generation failed:', error);
+      alert('PDF 변환 중 오류가 발생했습니다.');
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  const handleDownloadTXT = () => {
+    if (!viewDeepDive) return;
+    try {
+      const blob = new Blob([viewDeepDive.strategy as string], { type: 'text/plain;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `${viewDeepDive.name.replace(/\s+/g, '_')}_분석보고서.txt`;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error(error);
+      alert('TXT 변환 중 오류가 발생했습니다.');
     }
   };
 
@@ -203,19 +321,26 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({
             </div>
             <button onClick={fetchDiagnosis} disabled={loading} className="w-full py-4.5 bg-white text-slate-900 rounded-[1.5rem] font-black text-sm flex items-center justify-center gap-2.5 shadow-xl active:scale-95 transition-all">
               {loading ? <Loader2 size={18} className="animate-spin text-indigo-600" /> : <Sparkles size={18} className="text-indigo-600" />}
-              {loading ? '자산 정밀 분석 중...' : '신규 자산 분석 시작'}
+              {loading ? '자산 정밀 분석 중...' : '포트폴리오 분석 시작'}
             </button>
           </div>
         </section>
 
         {diagnosis && !loading && (
-          <div className="space-y-10 animate-in slide-in-from-bottom-4">
+          <div id="strategy-report-content" className="space-y-10 animate-in slide-in-from-bottom-4">
             <section className="bg-white p-7 rounded-[2.5rem] border border-slate-100 shadow-sm space-y-4">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2.5"><div className="p-2.5 bg-indigo-50 text-indigo-600 rounded-xl"><Activity size={20} /></div><h4 className="text-sm font-black text-slate-800">정밀 진단 리포트</h4></div>
-                <button onClick={handleOpenSaveModal} className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 text-indigo-600 rounded-lg text-xs font-bold hover:bg-indigo-100 transition-all">
-                  <Save size={16} /> 결과 저장
-                </button>
+                <div className="flex items-center gap-2">
+                  <button onClick={handleDownloadStrategyPDF} disabled={isExporting} className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 text-slate-600 rounded-lg text-xs font-bold hover:bg-slate-50 transition-all shadow-sm">
+                    {isExporting ? <Loader2 size={14} className="animate-spin" /> : <FileText size={14} />} 
+                    <span className="hidden sm:inline">PDF 저장</span>
+                    <span className="sm:hidden">PDF</span>
+                  </button>
+                  <button onClick={handleOpenSaveModal} className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 text-indigo-600 rounded-lg text-xs font-bold hover:bg-indigo-100 transition-all">
+                    <Save size={16} /> 결과 저장
+                  </button>
+                </div>
               </div>
               <div className="prose prose-slate prose-sm max-w-none text-slate-600 leading-relaxed pt-2">
                 <ReactMarkdown>{diagnosis.currentDiagnosis}</ReactMarkdown>
@@ -326,7 +451,12 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({
           </div>
 
           {deepDiveResult && (
-            <div className="animate-in slide-in-from-bottom-4 bg-slate-50 rounded-3xl p-6 border border-slate-100">
+            <div className="animate-in slide-in-from-bottom-4 bg-slate-50 rounded-3xl p-6 border border-slate-100 space-y-4">
+              <div className="flex justify-end">
+                <button onClick={handleSaveDeepDive} className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 text-indigo-600 rounded-lg text-xs font-bold hover:bg-indigo-100 transition-all">
+                  <Save size={16} /> 보관함에 저장하기
+                </button>
+              </div>
               <div className="prose prose-slate prose-sm max-w-none text-slate-600 leading-relaxed">
                 <ReactMarkdown>{deepDiveResult.text}</ReactMarkdown>
               </div>
@@ -444,6 +574,46 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({
           </div>
         )}
 
+        {viewDeepDive && createPortal(
+          <div className="fixed inset-0 z-[1100] flex items-center justify-center p-4">
+            <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={() => setViewDeepDive(null)}></div>
+            <div className="relative bg-white w-full max-w-2xl max-h-[90dvh] rounded-3xl shadow-2xl flex flex-col animate-in zoom-in-95">
+              <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-white rounded-t-3xl z-10 shrink-0">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 bg-rose-50 text-rose-500 rounded-lg"><TrendingUp size={18} /></div>
+                  <h3 className="text-lg font-black text-slate-800 truncate max-w-[200px] sm:max-w-xs">{viewDeepDive.name}</h3>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button 
+                    onClick={handleDownloadTXT} 
+                    className="px-3 py-1.5 bg-white border border-slate-200 text-slate-600 rounded-lg font-bold text-xs flex items-center gap-1.5 hover:bg-slate-50 transition-all shadow-sm hidden sm:flex"
+                  >
+                    <FileText size={14} /> TXT 추출
+                  </button>
+                  <button 
+                    onClick={handleDownloadPDF} 
+                    disabled={isExporting}
+                    className="px-3 py-1.5 bg-indigo-600 text-white rounded-lg font-bold text-xs flex items-center gap-1.5 hover:bg-indigo-700 transition-all shadow-sm active:scale-95 disabled:bg-slate-400"
+                  >
+                    {isExporting ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+                    <span className="hidden sm:inline">PDF 다운로드</span>
+                    <span className="sm:hidden">PDF</span>
+                  </button>
+                  <div className="w-px h-6 bg-slate-200 mx-1 hidden sm:block"></div>
+                  <button onClick={() => setViewDeepDive(null)} className="p-2 text-slate-400 hover:text-slate-600 bg-slate-50 rounded-xl transition-colors"><X size={18}/></button>
+                </div>
+              </div>
+              
+              <div id="deep-dive-pdf-content" className="flex-1 overflow-y-auto p-8 bg-white no-scrollbar rounded-b-3xl">
+                <div className="prose prose-slate max-w-none text-slate-600 leading-relaxed">
+                  <ReactMarkdown>{viewDeepDive.strategy as string}</ReactMarkdown>
+                </div>
+              </div>
+            </div>
+          </div>,
+          document.body
+        )}
+
         {isArchiveOpen && (
           <div className="fixed inset-0 z-[1000] flex items-end justify-center p-0">
             <div className="absolute inset-0 bg-slate-900/80 backdrop-blur-md" onClick={() => setIsArchiveOpen(false)}></div>
@@ -453,21 +623,30 @@ const AIAdvisor: React.FC<AIAdvisorProps> = ({
                 <button onClick={() => setIsArchiveOpen(false)} className="p-2 text-slate-400"><X size={24}/></button>
               </div>
               <div className="p-6 overflow-y-auto no-scrollbar flex-1 space-y-3 pb-safe">
-                {savedStrategies.length === 0 ? <p className="text-center py-20 text-slate-300 font-bold">저장된 기록이 없습니다.</p> : savedStrategies.map(item => (
-                  <div key={item.id} className="flex gap-2">
-                    <button onClick={() => handleLoadSaved(item)} className="flex-1 p-5 bg-slate-50 border border-slate-100 rounded-2xl text-left hover:border-indigo-600 transition-all group">
-                      <div className="flex justify-between items-start">
-                        <h5 className="text-sm font-black text-slate-800 group-hover:text-indigo-600">{item.name}</h5>
-                        <div className="flex gap-1">
-                          {item.diagnosis && <span className="p-1 rounded bg-indigo-50 text-indigo-400" title="진단 결과 포함"><FileText size={12} /></span>}
-                          {item.strategy && <span className="p-1 rounded bg-emerald-50 text-emerald-400" title="실행 전략 포함"><BarChart2 size={12} /></span>}
+                {savedStrategies.length === 0 ? <p className="text-center py-20 text-slate-300 font-bold">저장된 기록이 없습니다.</p> : savedStrategies.map(item => {
+                  const isDeepDive = item.diagnosis?.isDeepDive;
+                  return (
+                    <div key={item.id} className="flex gap-2">
+                      <button onClick={() => isDeepDive ? setViewDeepDive(item) : handleLoadSaved(item)} className="flex-1 p-5 bg-slate-50 border border-slate-100 rounded-2xl text-left hover:border-indigo-600 transition-all group">
+                        <div className="flex justify-between items-start">
+                          <h5 className="text-sm font-black text-slate-800 group-hover:text-indigo-600">{item.name}</h5>
+                          <div className="flex gap-1">
+                            {isDeepDive ? (
+                              <span className="px-2 py-1 flex items-center gap-1 rounded bg-rose-50 text-rose-500 text-[10px] font-bold"><TrendingUp size={12} /> 종목분석</span>
+                            ) : (
+                              <>
+                                {item.diagnosis && <span className="p-1 rounded bg-indigo-50 text-indigo-400" title="진단 결과 포함"><FileText size={12} /></span>}
+                                {item.strategy && <span className="p-1 rounded bg-emerald-50 text-emerald-400" title="실행 전략 포함"><BarChart2 size={12} /></span>}
+                              </>
+                            )}
+                          </div>
                         </div>
-                      </div>
-                      <p className="text-[10px] font-bold text-slate-400 mt-2">{new Date(item.createdAt).toLocaleDateString()}</p>
-                    </button>
-                    <button onClick={() => onDeleteStrategy(item.id)} className="p-4 text-slate-300 hover:text-rose-500"><Trash2 size={20}/></button>
-                  </div>
-                ))}
+                        <p className="text-[10px] font-bold text-slate-400 mt-2">{new Date(item.createdAt).toLocaleDateString()}</p>
+                      </button>
+                      <button onClick={() => onDeleteStrategy(item.id)} className="p-4 text-slate-300 hover:text-rose-500"><Trash2 size={20}/></button>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           </div>

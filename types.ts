@@ -137,12 +137,17 @@ export interface RebalancingStrategy {
   executionGroups: ExecutionGroup[]; 
 }
 
+export interface DeepDiveMetadata {
+  isDeepDive: boolean;
+  ticker: string;
+}
+
 export interface SavedStrategy {
   id: string;
   createdAt: number;
   name: string;
-  diagnosis?: DiagnosisResponse;
-  strategy?: RebalancingStrategy;
+  diagnosis?: DiagnosisResponse | DeepDiveMetadata | any;
+  strategy?: RebalancingStrategy | string | any;
 }
 
 export interface SyncConfig {
